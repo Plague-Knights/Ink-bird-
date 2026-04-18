@@ -1,0 +1,221 @@
+// Wallet + backend integration for the Ink Bird arcade.
+// Uses window.ethereum (MetaMask / Rabby / etc.) and ethers via CDN.
+
+const INK_MAINNET = {
+  chainId: "0xDEF1", // 57073
+  chainName: "Ink",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: ["https://rpc-gel.inkonchain.com"],
+  blockExplorerUrls: ["https://explorer.inkonchain.com"],
+};
+
+const ARCADE_ABI = [
+  "function enter() payable",
+  "function ENTRY_FEE() view returns (uint256)",
+  "function CREDITS_PER_ENTRY() view returns (uint256)",
+  "function currentWeekId() view returns (uint256)",
+  "function weekPool(uint256) view returns (uint256)",
+  "function claim(uint256 weekId, uint256 amount, bytes32[] proof)",
+  "function claimed(uint256, address) view returns (bool)",
+  "function weekSettledAt(uint256) view returns (uint256)",
+];
+
+// Wire from index.html via data attributes.
+const cfg = document.currentScript?.dataset || {};
+const BACKEND_URL = cfg.backend || "";
+const ARCADE_ADDRESS = cfg.arcade || "";
+
+const state = {
+  account: null,
+  credits: 0,
+  session: null, // { sessionId, seed, token, rng, inputs: [] }
+  provider: null,
+  signer: null,
+  connecting: false,
+  weekId: null,
+  pool: 0n,
+};
+
+export const arcade = {
+  state,
+  onChange: null,
+  async connect() { return connect(); },
+  async ensureChain() { return ensureChain(); },
+  async refreshCredits() { return refreshCredits(); },
+  async refreshPool() { return refreshPool(); },
+  async buyEntry() { return buyEntry(); },
+  async startSession() { return startSession(); },
+  recordInput(frame) { state.session?.inputs.push(frame); },
+  nextRandom() {
+    if (!state.session) return Math.random();
+    return state.session.rng();
+  },
+  async submitScore(score) { return submitScore(score); },
+  hasSession() { return !!state.session && !state.session.spent; },
+};
+
+function emit() { if (typeof arcade.onChange === "function") arcade.onChange(state); }
+
+function loadEthers() {
+  return new Promise((resolve, reject) => {
+    if (window.ethers) return resolve(window.ethers);
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js";
+    s.onload = () => resolve(window.ethers);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function connect() {
+  if (!window.ethereum) throw new Error("No wallet found. Install MetaMask or Rabby.");
+  if (state.connecting) return;
+  state.connecting = true;
+  try {
+    const ethers = await loadEthers();
+    await window.ethereum.request({ method: "eth_requestAccounts" });
+    await ensureChain();
+    state.provider = new ethers.BrowserProvider(window.ethereum);
+    state.signer = await state.provider.getSigner();
+    state.account = await state.signer.getAddress();
+    window.ethereum.on?.("accountsChanged", (a) => {
+      state.account = a[0] || null;
+      state.credits = 0;
+      state.session = null;
+      emit();
+    });
+    window.ethereum.on?.("chainChanged", () => window.location.reload());
+    await Promise.all([refreshCredits(), refreshPool()]);
+    emit();
+  } finally {
+    state.connecting = false;
+  }
+}
+
+async function ensureChain() {
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: INK_MAINNET.chainId }],
+    });
+  } catch (e) {
+    if (e.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [INK_MAINNET],
+      });
+    } else {
+      throw e;
+    }
+  }
+}
+
+async function refreshCredits() {
+  if (!state.account || !BACKEND_URL) return;
+  const res = await fetch(`${BACKEND_URL}/api/credits/${state.account}`);
+  if (res.ok) {
+    const j = await res.json();
+    state.credits = j.remaining || 0;
+    emit();
+  }
+}
+
+async function refreshPool() {
+  if (!ARCADE_ADDRESS || !state.provider) return;
+  const ethers = await loadEthers();
+  const c = new ethers.Contract(ARCADE_ADDRESS, ARCADE_ABI, state.provider);
+  const [wk, fee] = await Promise.all([c.currentWeekId(), c.ENTRY_FEE()]);
+  state.weekId = Number(wk);
+  state.pool = await c.weekPool(wk);
+  state.entryFee = fee;
+  emit();
+}
+
+async function buyEntry() {
+  if (!state.signer) throw new Error("connect wallet first");
+  const ethers = await loadEthers();
+  const c = new ethers.Contract(ARCADE_ADDRESS, ARCADE_ABI, state.signer);
+  const fee = state.entryFee ?? (await c.ENTRY_FEE());
+  const tx = await c.enter({ value: fee });
+  const rc = await tx.wait();
+  // Wait for backend indexer to observe the entry.
+  for (let i = 0; i < 30; i++) {
+    await sleep(2000);
+    await refreshCredits();
+    if (state.credits > 0) break;
+  }
+  await refreshPool();
+  return rc;
+}
+
+async function startSession() {
+  if (!state.signer) throw new Error("connect wallet first");
+  if (state.credits <= 0) throw new Error("no credits");
+  const ts = Date.now();
+  const message = `Ink Bird Arcade\nPlayer: ${state.account}\nTime: ${ts}`;
+  const signature = await state.signer.signMessage(message);
+  const res = await fetch(`${BACKEND_URL}/api/session`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ player: state.account, message, signature }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || "session failed");
+  const j = await res.json();
+  state.session = {
+    sessionId: j.sessionId,
+    seed: j.seed,
+    token: j.token,
+    inputs: [],
+    rng: makeRng(j.seed),
+    spent: false,
+  };
+  await refreshCredits();
+  emit();
+  return state.session;
+}
+
+async function submitScore(score) {
+  if (!state.session) throw new Error("no session");
+  const canonical = JSON.stringify({ seed: state.session.seed, inputs: state.session.inputs });
+  const inputsHash = await sha256Hex(canonical);
+  const res = await fetch(`${BACKEND_URL}/api/submit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      player: state.account,
+      token: state.session.token,
+      score,
+      inputs: state.session.inputs,
+      inputsHash,
+    }),
+  });
+  state.session.spent = true;
+  emit();
+  if (!res.ok) throw new Error((await res.json()).error || "submit failed");
+  return res.json();
+}
+
+// Deterministic PRNG seeded with the session seed. mulberry32.
+function makeRng(hexSeed) {
+  let a = 0;
+  for (let i = 0; i < hexSeed.length; i += 2) {
+    a = (a * 31 + parseInt(hexSeed.substr(i, 2), 16)) >>> 0;
+  }
+  return function () {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+async function sha256Hex(s) {
+  const buf = new TextEncoder().encode(s);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+window.inkArcade = arcade;

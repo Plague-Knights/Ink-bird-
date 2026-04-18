@@ -7,73 +7,50 @@
   const scoreEl = document.getElementById("score");
   const bestEl = document.getElementById("best");
   const leaderboardEl = document.getElementById("leaderboard");
-  const clearBoardBtn = document.getElementById("clearBoard");
-  const modal = document.getElementById("entryModal");
-  const initialsInput = document.getElementById("initials");
-  const entryScoreEl = document.getElementById("entryScore");
-  const saveInitialsBtn = document.getElementById("saveInitials");
-  const skipInitialsBtn = document.getElementById("skipInitials");
+  const refreshBoardBtn = document.getElementById("refreshBoard");
 
-  const LEADERBOARD_KEY = "inkbird.leaderboard";
-  const LEADERBOARD_MAX = 10;
+  const arcadeCfg = document.querySelector('script[data-backend]')?.dataset || {};
+  const BACKEND = arcadeCfg.backend || "";
 
-  function loadLeaderboard() {
-    try {
-      const raw = localStorage.getItem(LEADERBOARD_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((e) => e && typeof e.name === "string" && Number.isFinite(e.score))
-        .slice(0, LEADERBOARD_MAX);
-    } catch {
-      return [];
-    }
-  }
-
-  function saveLeaderboard(list) {
-    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list));
-  }
-
-  function renderLeaderboard() {
-    const list = loadLeaderboard();
+  async function renderLeaderboard() {
     leaderboardEl.innerHTML = "";
-    if (!list.length) {
+    if (!BACKEND) {
       const li = document.createElement("li");
       li.className = "empty";
-      li.textContent = "No scores yet";
+      li.textContent = "Backend not configured";
       leaderboardEl.appendChild(li);
       return;
     }
-    list.forEach((entry, i) => {
+    try {
+      const res = await fetch(`${BACKEND}/api/leaderboard`);
+      if (!res.ok) throw new Error("fetch failed");
+      const { entries } = await res.json();
+      if (!entries.length) {
+        const li = document.createElement("li");
+        li.className = "empty";
+        li.textContent = "No scores this week";
+        leaderboardEl.appendChild(li);
+        return;
+      }
+      entries.slice(0, 10).forEach((e, i) => {
+        const li = document.createElement("li");
+        li.className = `rank-${i + 1}`;
+        const name = document.createElement("span");
+        name.className = "name";
+        name.textContent = `${i + 1}. ${e.player.slice(0, 6)}…${e.player.slice(-4)}`;
+        const score = document.createElement("span");
+        score.className = "score";
+        score.textContent = String(e.score);
+        li.appendChild(name);
+        li.appendChild(score);
+        leaderboardEl.appendChild(li);
+      });
+    } catch {
       const li = document.createElement("li");
-      li.className = `rank-${i + 1}`;
-      const name = document.createElement("span");
-      name.className = "name";
-      name.textContent = `${i + 1}. ${entry.name}`;
-      const score = document.createElement("span");
-      score.className = "score";
-      score.textContent = String(entry.score);
-      li.appendChild(name);
-      li.appendChild(score);
+      li.className = "empty";
+      li.textContent = "Leaderboard unavailable";
       leaderboardEl.appendChild(li);
-    });
-  }
-
-  function qualifiesForLeaderboard(score) {
-    if (score <= 0) return false;
-    const list = loadLeaderboard();
-    if (list.length < LEADERBOARD_MAX) return true;
-    return score > list[list.length - 1].score;
-  }
-
-  function insertLeaderboardEntry(name, score) {
-    const list = loadLeaderboard();
-    list.push({ name, score, date: Date.now() });
-    list.sort((a, b) => b.score - a.score);
-    const trimmed = list.slice(0, LEADERBOARD_MAX);
-    saveLeaderboard(trimmed);
-    renderLeaderboard();
+    }
   }
 
   const GRAVITY = 0.5;
@@ -104,6 +81,12 @@
   bestEl.textContent = best;
 
   function rand(a, b) { return a + Math.random() * (b - a); }
+
+  // Gameplay-critical RNG: uses the backend-issued session seed so runs can
+  // be replayed for anti-cheat. Falls back to Math.random for free play.
+  function gameRand() {
+    return window.inkArcade?.nextRandom?.() ?? Math.random();
+  }
 
   function initParallax() {
     // "stars" are reused as rising bubbles.
@@ -155,19 +138,17 @@
     const margin = 60;
     const minTop = margin;
     const maxTop = H - GROUND_H - PIPE_GAP - margin;
-    const top = minTop + Math.random() * (maxTop - minTop);
-    // Always place a droplet centered in the gap — scoring is based on ink
-    // collected, so every pipe must give the player a chance to score.
+    const top = minTop + gameRand() * (maxTop - minTop);
     const dropX = x + PIPE_WIDTH / 2;
-    const dropY = top + PIPE_GAP / 2 + (Math.random() * 30 - 15);
+    const dropY = top + PIPE_GAP / 2 + (gameRand() * 30 - 15);
     pipes.push({ x, top, passed: false });
-    droplets.push({ x: dropX, y: dropY, r: 10, collected: false, bob: Math.random() * Math.PI * 2 });
+    droplets.push({ x: dropX, y: dropY, r: 10, collected: false, bob: gameRand() * Math.PI * 2 });
   }
 
   function flap() {
-    if (!modal.classList.contains("hidden")) return;
     if (state === STATE.READY) state = STATE.PLAYING;
     if (state === STATE.PLAYING) {
+      window.inkArcade?.recordInput?.(frame);
       bird.vy = FLAP;
       bird.flapPhase = 0;
       // Bubble burst from the squid's mantle when it jets.
@@ -331,29 +312,13 @@
       localStorage.setItem("inkbird.best", String(best));
       bestEl.textContent = best;
     }
-    if (qualifiesForLeaderboard(score)) {
-      promptForInitials(score);
+    // Paid run: submit score to backend, then refresh leaderboard.
+    if (window.inkArcade?.hasSession?.()) {
+      const finalScore = score;
+      window.inkArcade.submitScore(finalScore)
+        .then(() => renderLeaderboard())
+        .catch((e) => console.warn("submit failed", e));
     }
-  }
-
-  function promptForInitials(finalScore) {
-    entryScoreEl.textContent = String(finalScore);
-    initialsInput.value = "";
-    modal.classList.remove("hidden");
-    modal.setAttribute("aria-hidden", "false");
-    setTimeout(() => initialsInput.focus(), 0);
-  }
-
-  function closeModal() {
-    modal.classList.add("hidden");
-    modal.setAttribute("aria-hidden", "true");
-  }
-
-  function commitInitials() {
-    const raw = (initialsInput.value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const name = (raw || "???").slice(0, 3).padEnd(3, "?");
-    insertLeaderboardEntry(name, score);
-    closeModal();
   }
 
   // ---------- Rendering ----------
@@ -851,11 +816,6 @@
   }
 
   window.addEventListener("keydown", (e) => {
-    if (!modal.classList.contains("hidden")) {
-      if (e.key === "Enter") { e.preventDefault(); commitInitials(); }
-      else if (e.key === "Escape") { e.preventDefault(); closeModal(); }
-      return;
-    }
     if (e.code === "Space" || e.code === "ArrowUp") {
       e.preventDefault();
       flap();
@@ -864,17 +824,9 @@
     }
   });
 
-  saveInitialsBtn.addEventListener("click", commitInitials);
-  skipInitialsBtn.addEventListener("click", closeModal);
-  initialsInput.addEventListener("input", () => {
-    initialsInput.value = initialsInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
-  });
-  clearBoardBtn.addEventListener("click", () => {
-    if (confirm("Clear the leaderboard?")) {
-      saveLeaderboard([]);
-      renderLeaderboard();
-    }
-  });
+  refreshBoardBtn.addEventListener("click", () => renderLeaderboard());
+  // New paid session: reset the game so the first flap uses the session RNG.
+  window.addEventListener("inkarcade:session", () => reset());
   canvas.addEventListener("mousedown", (e) => {
     e.preventDefault();
     flap();
