@@ -406,17 +406,28 @@ canvas {
 .modal {
   position: fixed;
   inset: 0;
+  height: 100dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   background: rgba(2, 10, 25, 0.7);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 20px;
   z-index: 20;
   animation: fadeIn 0.2s ease-out;
 }
 
 .modal.hidden { display: none; }
+
+body.modal-open {
+  position: fixed;
+  width: 100%;
+  overflow: hidden;
+}
 
 .modal-card {
   background: linear-gradient(180deg, rgba(10, 30, 60, 0.95), rgba(6, 18, 38, 0.95));

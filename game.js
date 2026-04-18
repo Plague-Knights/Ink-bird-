@@ -387,17 +387,34 @@
     }, 500);
   }
 
+  let savedScrollY = 0;
+  function lockBodyScroll() {
+    savedScrollY = window.scrollY;
+    document.body.style.top = `-${savedScrollY}px`;
+    document.body.classList.add("modal-open");
+  }
+  function unlockBodyScroll() {
+    document.body.classList.remove("modal-open");
+    document.body.style.top = "";
+    window.scrollTo(0, savedScrollY);
+  }
+
   function promptForInitials(finalScore) {
     entryScoreEl.textContent = String(finalScore);
     initialsInput.value = "";
     modal.classList.remove("hidden");
     modal.setAttribute("aria-hidden", "false");
-    setTimeout(() => initialsInput.focus(), 0);
+    lockBodyScroll();
+    // preventScroll stops the browser from scrolling the page to reveal
+    // the input when the keyboard opens on mobile.
+    setTimeout(() => initialsInput.focus({ preventScroll: true }), 50);
   }
 
   function closeModal() {
     modal.classList.add("hidden");
     modal.setAttribute("aria-hidden", "true");
+    initialsInput.blur();
+    unlockBodyScroll();
   }
 
   function commitInitials() {
