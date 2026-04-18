@@ -896,8 +896,28 @@
     ctx.restore();
   }
 
-  function loop() {
-    if (!paused) update();
+  // Fixed timestep: physics always advance at 60 ticks per second regardless
+  // of the display's refresh rate. On a 144 Hz PC the render loop runs at
+  // 144 fps but update() still fires ~60 times per second, so the game feels
+  // the same as on a 60 Hz phone.
+  const STEP_MS = 1000 / 60;
+  const MAX_FRAME_MS = 250; // cap to avoid huge catch-up after tab backgrounding
+  let lastTime = 0;
+  let accumulator = 0;
+
+  function loop(now) {
+    if (!lastTime) lastTime = now;
+    const elapsed = Math.min(MAX_FRAME_MS, now - lastTime);
+    lastTime = now;
+    if (!paused) {
+      accumulator += elapsed;
+      while (accumulator >= STEP_MS) {
+        update();
+        accumulator -= STEP_MS;
+      }
+    } else {
+      accumulator = 0;
+    }
     render();
     requestAnimationFrame(loop);
   }
@@ -964,5 +984,5 @@
   renderLeaderboard();
   reset();
   showScreen(menuScreen);
-  loop();
+  requestAnimationFrame(loop);
 })();
