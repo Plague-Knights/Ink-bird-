@@ -600,6 +600,23 @@
     ctx.fillStyle = g;
     ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
 
+    // Animated caustics — shifting bright patches from light filtering down.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 6; i++) {
+      const cx = ((i * 90 + frame * 0.6) % (W + 120)) - 60;
+      const cy = H - GROUND_H + 10 + Math.sin(frame * 0.03 + i) * 3;
+      const rx = 40 + Math.sin(frame * 0.05 + i * 1.7) * 12;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, rx);
+      grad.addColorStop(0, "rgba(255, 240, 200, 0.25)");
+      grad.addColorStop(1, "rgba(255, 240, 200, 0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rx, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
     // Dark sand line.
     ctx.fillStyle = "rgba(40, 25, 8, 0.4)";
     ctx.fillRect(0, H - GROUND_H, W, 2);
@@ -670,6 +687,16 @@
     // two side fins, two big cute eyes. Uses the same physics entity (`bird`).
     ctx.save();
     ctx.translate(bird.x, bird.y);
+
+    // Ambient bioluminescent glow under the squid.
+    const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, bird.r * 2.6);
+    glow.addColorStop(0, "rgba(120, 200, 255, 0.22)");
+    glow.addColorStop(1, "rgba(120, 200, 255, 0)");
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, bird.r * 2.6, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.rotate(bird.rot * 0.55);
 
     // Soft shadow.
@@ -817,12 +844,15 @@
     if (state !== STATE.PLAYING) return;
     ctx.save();
     ctx.textAlign = "center";
-    ctx.font = "bold 52px sans-serif";
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = "rgba(0,0,0,0.6)";
-    ctx.strokeText(String(score), W / 2, 80);
+    ctx.font = '900 56px "Rubik", sans-serif';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = "rgba(2, 10, 25, 0.7)";
+    ctx.strokeText(String(score), W / 2, 88);
+    // Subtle glow behind the number.
+    ctx.shadowColor = "rgba(95, 216, 255, 0.5)";
+    ctx.shadowBlur = 20;
     ctx.fillStyle = "#fff";
-    ctx.fillText(String(score), W / 2, 80);
+    ctx.fillText(String(score), W / 2, 88);
     ctx.restore();
   }
 
