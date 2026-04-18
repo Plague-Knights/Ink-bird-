@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ink Bird</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Ink Bird</h1>
+    <p class="tag">Flap through the pipes and collect ink droplets.</p>
+    <canvas id="game" width="480" height="640"></canvas>
+    <div class="hud">
+      <div>Score: <span id="score">0</span></div>
+      <div>Ink: <span id="ink">0</span></div>
+      <div>Best: <span id="best">0</span></div>
+    </div>
+    <p class="hint">Click / Tap / Space to flap. R to restart.</p>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
