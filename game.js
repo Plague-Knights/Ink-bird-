@@ -76,8 +76,8 @@
     renderLeaderboard();
   }
 
-  const GRAVITY = 0.45;
-  const FLAP = -7.8;
+  const GRAVITY = 0.28;
+  const FLAP = -6.2;
   const PIPE_GAP = 160;
   const PIPE_WIDTH = 64;
   const PIPE_SPEED = 2.4;
