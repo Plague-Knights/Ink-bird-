@@ -105,18 +105,24 @@
   function rand(a, b) { return a + Math.random() * (b - a); }
 
   function initParallax() {
+    // "stars" are reused as rising bubbles.
     stars = [];
-    for (let i = 0; i < 40; i++) {
-      stars.push({ x: Math.random() * W, y: Math.random() * (H - GROUND_H - 160), r: rand(0.4, 1.6), tw: Math.random() * Math.PI * 2 });
+    for (let i = 0; i < 36; i++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * (H - GROUND_H),
+        r: rand(1.2, 3.2),
+        tw: Math.random() * Math.PI * 2,
+        vy: rand(0.3, 0.9),
+      });
     }
+    // "hills" are reused as seaweed clumps along the seafloor.
     hills = [];
-    // Far hills
     for (let i = 0; i < 6; i++) {
-      hills.push({ layer: 0, x: i * 120, w: rand(140, 220), h: rand(60, 110) });
+      hills.push({ layer: 0, x: i * 120, w: rand(120, 180), h: rand(60, 110) });
     }
-    // Near hills
     for (let i = 0; i < 6; i++) {
-      hills.push({ layer: 1, x: i * 160, w: rand(180, 260), h: rand(90, 150) });
+      hills.push({ layer: 1, x: i * 160, w: rand(160, 220), h: rand(90, 150) });
     }
   }
 
@@ -163,17 +169,17 @@
     if (state === STATE.PLAYING) {
       bird.vy = FLAP;
       bird.flapPhase = 0;
-      // Puff particles.
-      for (let i = 0; i < 5; i++) {
+      // Bubble burst from the squid's mantle when it jets.
+      for (let i = 0; i < 6; i++) {
         particles.push({
-          x: bird.x - 8,
-          y: bird.y + 6,
-          vx: rand(-1.6, -0.3),
-          vy: rand(-0.5, 0.8),
-          life: 20,
-          max: 20,
-          r: rand(2, 4),
-          color: "rgba(255,255,255,0.7)",
+          x: bird.x - 10,
+          y: bird.y + rand(-3, 5),
+          vx: rand(-1.8, -0.4),
+          vy: rand(-1.2, -0.1),
+          life: 26,
+          max: 26,
+          r: rand(1.5, 3.5),
+          color: "rgba(200,230,255,0.85)",
           kind: "puff",
         });
       }
@@ -205,11 +211,15 @@
     groundX = (groundX - PIPE_SPEED) % 32;
     shake *= 0.85;
 
-    // Parallax movement.
+    // Bubbles rise, with a gentle horizontal wobble, and recycle at the top.
     for (const s of stars) {
-      s.x -= 0.15;
+      s.y -= s.vy;
+      s.x += Math.sin(s.tw) * 0.3 - 0.15;
       s.tw += 0.05;
-      if (s.x < -4) s.x = W + 4;
+      if (s.y < -6 || s.x < -6) {
+        s.y = H - GROUND_H - rand(0, 40);
+        s.x = Math.random() * W;
+      }
     }
     for (const h of hills) {
       h.x -= h.layer === 0 ? 0.3 : 0.7;
@@ -347,103 +357,143 @@
   // ---------- Rendering ----------
 
   function drawSky() {
+    // Ocean gradient: sunlit teal at the surface, deep navy at depth.
     const g = ctx.createLinearGradient(0, 0, 0, H - GROUND_H);
-    g.addColorStop(0, "#1b1446");
-    g.addColorStop(0.45, "#3a2c7a");
-    g.addColorStop(0.8, "#c85a8a");
-    g.addColorStop(1, "#f3c27a");
+    g.addColorStop(0, "#7ad3e0");
+    g.addColorStop(0.25, "#2a9ac2");
+    g.addColorStop(0.6, "#0e4a7c");
+    g.addColorStop(1, "#041a3a");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H - GROUND_H);
+
+    // Surface shimmer band.
+    const shimmer = ctx.createLinearGradient(0, 0, 0, 40);
+    shimmer.addColorStop(0, "rgba(255,255,255,0.35)");
+    shimmer.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = shimmer;
+    ctx.fillRect(0, 0, W, 40);
+
+    // Light rays slanting down from above.
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < 5; i++) {
+      const baseX = ((i * 140 + frame * 0.4) % (W + 240)) - 120;
+      ctx.fillStyle = "rgba(200, 230, 255, 0.05)";
+      ctx.beginPath();
+      ctx.moveTo(baseX, 0);
+      ctx.lineTo(baseX + 50, 0);
+      ctx.lineTo(baseX + 210, H - GROUND_H);
+      ctx.lineTo(baseX + 170, H - GROUND_H);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   function drawStars() {
+    // Rising bubbles.
     for (const s of stars) {
-      const a = 0.5 + Math.sin(s.tw) * 0.3;
-      ctx.fillStyle = `rgba(255,245,220,${a})`;
+      const a = 0.35 + Math.sin(s.tw) * 0.15;
+      ctx.strokeStyle = `rgba(220, 240, 255, ${a + 0.35})`;
+      ctx.lineWidth = 1;
+      ctx.fillStyle = `rgba(180, 220, 255, ${a * 0.35})`;
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = `rgba(255,255,255,${a + 0.4})`;
+      ctx.beginPath();
+      ctx.arc(s.x - s.r * 0.4, s.y - s.r * 0.4, Math.max(0.6, s.r * 0.25), 0, Math.PI * 2);
+      ctx.fill();
     }
-    // Moon.
-    const mx = W - 80;
-    const my = 90;
-    ctx.fillStyle = "rgba(255, 240, 200, 0.95)";
-    ctx.beginPath();
-    ctx.arc(mx, my, 28, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(0,0,0,0.08)";
-    ctx.beginPath();
-    ctx.arc(mx - 6, my - 4, 5, 0, Math.PI * 2);
-    ctx.arc(mx + 8, my + 6, 4, 0, Math.PI * 2);
-    ctx.arc(mx - 2, my + 10, 3, 0, Math.PI * 2);
-    ctx.fill();
   }
 
   function drawHills() {
-    // Far
-    ctx.fillStyle = "rgba(50, 28, 90, 0.85)";
-    for (const h of hills) if (h.layer === 0) {
-      const baseY = H - GROUND_H;
-      ctx.beginPath();
-      ctx.moveTo(h.x, baseY);
-      ctx.quadraticCurveTo(h.x + h.w / 2, baseY - h.h, h.x + h.w, baseY);
-      ctx.closePath();
-      ctx.fill();
-    }
-    // Near
-    ctx.fillStyle = "rgba(30, 14, 60, 0.95)";
-    for (const h of hills) if (h.layer === 1) {
-      const baseY = H - GROUND_H;
-      ctx.beginPath();
-      ctx.moveTo(h.x, baseY);
-      ctx.quadraticCurveTo(h.x + h.w / 2, baseY - h.h, h.x + h.w, baseY);
-      ctx.closePath();
-      ctx.fill();
+    // Seaweed clumps — thin wavy strands rooted in the seafloor.
+    const baseY = H - GROUND_H;
+    for (const h of hills) {
+      const isFar = h.layer === 0;
+      ctx.strokeStyle = isFar ? "rgba(25, 90, 80, 0.55)" : "rgba(10, 60, 45, 0.95)";
+      ctx.lineWidth = isFar ? 3 : 5;
+      ctx.lineCap = "round";
+      const blades = isFar ? 3 : 4;
+      for (let i = 0; i < blades; i++) {
+        const bx = h.x + (i + 0.5) * (h.w / blades);
+        const bladeH = h.h * 0.85;
+        ctx.beginPath();
+        ctx.moveTo(bx, baseY);
+        const segs = 5;
+        for (let s = 1; s <= segs; s++) {
+          const t = s / segs;
+          const wy = baseY - t * bladeH;
+          const wx = bx + Math.sin(frame * 0.04 + i * 0.9 + h.x * 0.02 + t * 2) * 7 * t;
+          ctx.lineTo(wx, wy);
+        }
+        ctx.stroke();
+      }
     }
   }
 
   function drawPipe(x, topH, isTop) {
-    // Pipe as an ink-glass column.
+    // Rocky column with coral cap and anemone tendrils.
     const y = isTop ? 0 : topH + PIPE_GAP;
     const h = isTop ? topH : H - GROUND_H - (topH + PIPE_GAP);
 
-    // Shadow stripe on the ground behind.
+    // Column body.
     const grad = ctx.createLinearGradient(x, 0, x + PIPE_WIDTH, 0);
-    grad.addColorStop(0, "#1a0b36");
-    grad.addColorStop(0.25, "#4a2790");
-    grad.addColorStop(0.5, "#7c4fd6");
-    grad.addColorStop(0.75, "#4a2790");
-    grad.addColorStop(1, "#1a0b36");
+    grad.addColorStop(0, "#10202f");
+    grad.addColorStop(0.5, "#456680");
+    grad.addColorStop(1, "#10202f");
     ctx.fillStyle = grad;
     ctx.fillRect(x, y, PIPE_WIDTH, h);
 
-    // Glass highlight.
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
-    ctx.fillRect(x + 8, y, 4, h);
+    // Rock speckles (seeded by x for stability).
+    ctx.fillStyle = "rgba(0,0,0,0.22)";
+    const seed = (x | 0);
+    for (let i = 0; i < 10; i++) {
+      const rx = x + 4 + ((i * 13 + seed * 7) % (PIPE_WIDTH - 8));
+      const ry = y + 8 + ((i * 29 + seed * 11) % Math.max(1, h - 16));
+      ctx.beginPath();
+      ctx.arc(rx, ry, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Highlight stripe.
+    ctx.fillStyle = "rgba(255,255,255,0.08)";
+    ctx.fillRect(x + 8, y, 3, h);
 
-    // Inner ink level (fills partway).
-    const inkFillH = Math.min(h - 8, 90 + Math.sin((x + frame) * 0.02) * 6);
-    const inkY = isTop ? y + h - inkFillH - 4 : y + 4;
-    ctx.fillStyle = "#0b0420";
-    ctx.fillRect(x + 6, inkY, PIPE_WIDTH - 12, inkFillH);
-    // Ink meniscus.
-    ctx.fillStyle = "#1a0b36";
-    ctx.fillRect(x + 6, isTop ? inkY : inkY + inkFillH - 2, PIPE_WIDTH - 12, 2);
-
-    // Cap (rim).
-    const capH = 16;
+    // Coral-rock cap at the gap-facing end.
+    const capH = 14;
     const capY = isTop ? y + h - capH : y;
     const capGrad = ctx.createLinearGradient(x, 0, x + PIPE_WIDTH, 0);
-    capGrad.addColorStop(0, "#12062a");
-    capGrad.addColorStop(0.5, "#5b31ae");
-    capGrad.addColorStop(1, "#12062a");
+    capGrad.addColorStop(0, "#18344a");
+    capGrad.addColorStop(0.5, "#5d87a8");
+    capGrad.addColorStop(1, "#18344a");
     ctx.fillStyle = capGrad;
     ctx.fillRect(x - 5, capY, PIPE_WIDTH + 10, capH);
-    ctx.fillStyle = "rgba(255,255,255,0.18)";
-    ctx.fillRect(x - 3, capY + 2, 6, capH - 4);
-    // Cap edge.
-    ctx.fillStyle = "#080218";
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
     ctx.fillRect(x - 5, isTop ? capY : capY + capH - 2, PIPE_WIDTH + 10, 2);
+
+    // Anemone tendrils protruding into the gap.
+    const edgeY = isTop ? capY + capH : capY;
+    const dir = isTop ? 1 : -1;
+    const tendrils = 11;
+    for (let i = 0; i < tendrils; i++) {
+      const tx = x + 2 + i * ((PIPE_WIDTH - 4) / (tendrils - 1));
+      const wave = Math.sin(frame * 0.08 + i * 0.7 + x * 0.02);
+      const tipX = tx + wave * 3;
+      const tipY = edgeY + dir * (6 + (i % 3) * 3);
+      ctx.strokeStyle = i % 2 === 0 ? "#ff7aa8" : "#ff4f8b";
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(tx, edgeY);
+      ctx.quadraticCurveTo(tx + wave * 2, edgeY + dir * 4, tipX, tipY);
+      ctx.stroke();
+      ctx.fillStyle = "#ffc2d7";
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   function drawPipes() {
@@ -490,37 +540,43 @@
   }
 
   function drawGround() {
-    // Base.
+    // Sandy seafloor.
     const g = ctx.createLinearGradient(0, H - GROUND_H, 0, H);
-    g.addColorStop(0, "#3a1e5f");
-    g.addColorStop(1, "#150828");
+    g.addColorStop(0, "#d5b47c");
+    g.addColorStop(1, "#6f4c22");
     ctx.fillStyle = g;
     ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
 
-    // Top lip.
-    ctx.fillStyle = "#5a2e94";
-    ctx.fillRect(0, H - GROUND_H, W, 4);
-    ctx.fillStyle = "#20103c";
-    ctx.fillRect(0, H - GROUND_H + 4, W, 2);
+    // Dark sand line.
+    ctx.fillStyle = "rgba(40, 25, 8, 0.4)";
+    ctx.fillRect(0, H - GROUND_H, W, 2);
 
-    // Tufts / ink blots.
+    // Pebbles and shells scrolling.
     for (let x = groundX; x < W + 32; x += 32) {
-      ctx.fillStyle = "#2a1046";
+      ctx.fillStyle = "rgba(60, 38, 14, 0.55)";
       ctx.beginPath();
-      ctx.arc(x + 8, H - GROUND_H + 10, 4, 0, Math.PI * 2);
-      ctx.arc(x + 16, H - GROUND_H + 8, 2.5, 0, Math.PI * 2);
-      ctx.arc(x + 22, H - GROUND_H + 12, 3.5, 0, Math.PI * 2);
+      ctx.arc(x + 8, H - GROUND_H + 14, 3, 0, Math.PI * 2);
+      ctx.arc(x + 18, H - GROUND_H + 10, 2, 0, Math.PI * 2);
+      ctx.arc(x + 24, H - GROUND_H + 18, 2.6, 0, Math.PI * 2);
       ctx.fill();
+      // Tiny shell (arc).
+      ctx.strokeStyle = "rgba(255, 230, 200, 0.6)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x + 14, H - GROUND_H + 22, 2.4, Math.PI, 0);
+      ctx.stroke();
     }
 
-    // Scanlines / cracks.
-    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    // Subtle sand ripples.
+    ctx.strokeStyle = "rgba(60, 30, 10, 0.18)";
     ctx.lineWidth = 1;
     for (let i = 0; i < 4; i++) {
-      const yy = H - GROUND_H + 20 + i * 12;
+      const yy = H - GROUND_H + 30 + i * 10;
       ctx.beginPath();
       ctx.moveTo(0, yy);
-      ctx.lineTo(W, yy);
+      for (let x = 0; x <= W; x += 16) {
+        ctx.lineTo(x, yy + Math.sin((x + groundX) * 0.08) * 1.2);
+      }
       ctx.stroke();
     }
   }
@@ -539,119 +595,158 @@
     for (const p of particles) {
       const a = p.life / p.max;
       if (p.kind === "puff") {
-        ctx.fillStyle = `rgba(255,255,255,${a * 0.7})`;
+        // Bubble: outlined circle with highlight.
+        ctx.strokeStyle = `rgba(220,240,255,${a * 0.9})`;
+        ctx.fillStyle = `rgba(180,220,255,${a * 0.25})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
       } else {
         ctx.fillStyle = p.color.replace(/[\d.]+\)$/g, `${a})`);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
       }
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fill();
     }
   }
 
   function drawBird() {
+    // Cartoony squid: mantle pointing forward (right), tentacles trailing left,
+    // two side fins, two big cute eyes. Uses the same physics entity (`bird`).
     ctx.save();
     ctx.translate(bird.x, bird.y);
-    ctx.rotate(bird.rot);
+    ctx.rotate(bird.rot * 0.55);
 
-    // Soft shadow beneath.
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    // Soft shadow.
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
     ctx.beginPath();
-    ctx.ellipse(2, bird.r + 2, bird.r, 3, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, bird.r + 3, bird.r + 2, 2.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Tail feathers.
-    ctx.fillStyle = "#2a1358";
+    const mantleLen = bird.r + 9;
+    const mantleH = bird.r - 2;
+    const waveT = frame * 0.2 + bird.flapPhase * 0.5;
+
+    // Eight trailing arms.
+    const armBaseX = -mantleLen * 0.38;
+    const arms = 8;
+    for (let i = 0; i < arms; i++) {
+      const row = (i - (arms - 1) / 2) / arms;
+      const yStart = row * (mantleH * 1.1);
+      const len = 18 + Math.abs(row) * 5;
+      ctx.strokeStyle = "#4a2a9c";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(armBaseX, yStart);
+      const segs = 5;
+      for (let s = 1; s <= segs; s++) {
+        const t = s / segs;
+        const ax = armBaseX - t * len;
+        const ay = yStart + Math.sin(waveT + i * 0.7 + t * 3) * 4 * t;
+        ctx.lineTo(ax, ay);
+      }
+      ctx.stroke();
+      // Inner lighter stripe for depth.
+      ctx.strokeStyle = "#8e67e0";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(armBaseX, yStart);
+      for (let s = 1; s <= segs; s++) {
+        const t = s / segs;
+        const ax = armBaseX - t * len;
+        const ay = yStart + Math.sin(waveT + i * 0.7 + t * 3) * 4 * t;
+        ctx.lineTo(ax, ay);
+      }
+      ctx.stroke();
+    }
+
+    // Two longer feeding tentacles with clubs.
+    for (const sign of [-1, 1]) {
+      const y0 = sign * mantleH * 0.5;
+      ctx.strokeStyle = "#2a1358";
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(armBaseX, y0);
+      const segs = 6;
+      const len = 28;
+      let lx = armBaseX, ly = y0;
+      for (let s = 1; s <= segs; s++) {
+        const t = s / segs;
+        lx = armBaseX - t * len;
+        ly = y0 + Math.sin(waveT * 1.1 + t * 4 + sign) * 5 * t;
+        ctx.lineTo(lx, ly);
+      }
+      ctx.stroke();
+      ctx.fillStyle = "#7c4fd6";
+      ctx.beginPath();
+      ctx.ellipse(lx, ly, 3.2, 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Side fins behind the mantle (small triangles).
+    ctx.fillStyle = "#4a2a9c";
     ctx.beginPath();
-    ctx.moveTo(-bird.r - 2, -2);
-    ctx.lineTo(-bird.r - 10, -8);
-    ctx.lineTo(-bird.r - 12, 0);
-    ctx.lineTo(-bird.r - 10, 8);
+    ctx.moveTo(-mantleLen * 0.15, -mantleH * 0.9);
+    ctx.quadraticCurveTo(-mantleLen * 0.55, -mantleH - 6, -mantleLen * 0.45, -mantleH * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-mantleLen * 0.15, mantleH * 0.9);
+    ctx.quadraticCurveTo(-mantleLen * 0.55, mantleH + 6, -mantleLen * 0.45, mantleH * 0.6);
     ctx.closePath();
     ctx.fill();
 
-    // Body.
-    const bodyGrad = ctx.createRadialGradient(-5, -6, 2, 0, 0, bird.r + 6);
-    bodyGrad.addColorStop(0, "#9a73e6");
-    bodyGrad.addColorStop(0.5, "#5a33b5");
-    bodyGrad.addColorStop(1, "#1a0b36");
-    ctx.fillStyle = bodyGrad;
+    // Mantle (teardrop, pointed end forward-right).
+    const mantleGrad = ctx.createLinearGradient(0, -mantleH, 0, mantleH);
+    mantleGrad.addColorStop(0, "#c8aef5");
+    mantleGrad.addColorStop(0.55, "#7c4fd6");
+    mantleGrad.addColorStop(1, "#311766");
+    ctx.fillStyle = mantleGrad;
     ctx.beginPath();
-    ctx.ellipse(0, 0, bird.r + 3, bird.r, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Belly.
-    ctx.fillStyle = "rgba(255, 230, 200, 0.75)";
-    ctx.beginPath();
-    ctx.ellipse(2, 5, bird.r * 0.65, bird.r * 0.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Wing (animated).
-    const wing = Math.sin(bird.flapPhase);
-    ctx.save();
-    ctx.translate(-2, 2);
-    ctx.rotate(wing * 0.7 - 0.2);
-    const wingGrad = ctx.createLinearGradient(-10, -6, 10, 8);
-    wingGrad.addColorStop(0, "#b79af0");
-    wingGrad.addColorStop(1, "#3a1c7a");
-    ctx.fillStyle = wingGrad;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 12, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.2)";
-    ctx.beginPath();
-    ctx.ellipse(-2, -2, 6, 2.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // Eye white.
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(8, -5, 5, 0, Math.PI * 2);
-    ctx.fill();
-    // Pupil.
-    ctx.fillStyle = "#0a0320";
-    ctx.beginPath();
-    ctx.arc(9.5, -5, 2.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(10.2, -6, 0.8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Beak (fountain-pen nib).
-    const nibX = bird.r + 1;
-    ctx.fillStyle = "#2a2a2a";
-    ctx.beginPath();
-    ctx.moveTo(nibX, -4);
-    ctx.lineTo(nibX + 14, 0);
-    ctx.lineTo(nibX, 5);
+    ctx.moveTo(mantleLen, 0);
+    ctx.bezierCurveTo(mantleLen * 0.6, -mantleH, -mantleLen * 0.3, -mantleH, -mantleLen * 0.4, 0);
+    ctx.bezierCurveTo(-mantleLen * 0.3, mantleH, mantleLen * 0.6, mantleH, mantleLen, 0);
     ctx.closePath();
     ctx.fill();
-    // Nib highlight.
-    ctx.fillStyle = "#8a8a95";
+
+    // Top-side glossy highlight.
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
     ctx.beginPath();
-    ctx.moveTo(nibX + 1, -3);
-    ctx.lineTo(nibX + 10, 0);
-    ctx.lineTo(nibX + 1, 2);
-    ctx.closePath();
+    ctx.ellipse(mantleLen * 0.1, -mantleH * 0.55, mantleLen * 0.45, mantleH * 0.22, 0, 0, Math.PI * 2);
     ctx.fill();
-    // Nib slit.
-    ctx.strokeStyle = "#0a0320";
-    ctx.lineWidth = 1;
+
+    // Belly spots for character.
+    ctx.fillStyle = "rgba(255, 210, 230, 0.45)";
     ctx.beginPath();
-    ctx.moveTo(nibX + 2, 0);
-    ctx.lineTo(nibX + 12, 0);
-    ctx.stroke();
-    // Nib breather hole.
-    ctx.fillStyle = "#0a0320";
-    ctx.beginPath();
-    ctx.arc(nibX + 4, 0, 1.1, 0, Math.PI * 2);
+    ctx.arc(mantleLen * 0.1, mantleH * 0.5, 2.5, 0, Math.PI * 2);
+    ctx.arc(-mantleLen * 0.15, mantleH * 0.45, 2, 0, Math.PI * 2);
     ctx.fill();
-    // Ink bead at tip.
-    ctx.fillStyle = "rgba(30, 10, 60, 0.9)";
+
+    // Two eyes.
+    const eyeY = -mantleH * 0.15;
+    for (const ex of [mantleLen * 0.4, mantleLen * 0.15]) {
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(ex, eyeY, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#0a0320";
+      ctx.beginPath();
+      ctx.arc(ex + 1, eyeY + 0.5, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.beginPath();
+      ctx.arc(ex + 1.8, eyeY - 0.8, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Blush.
+    ctx.fillStyle = "rgba(255, 150, 180, 0.4)";
     ctx.beginPath();
-    ctx.arc(nibX + 14.5, 0.5, 1.6, 0, Math.PI * 2);
+    ctx.ellipse(mantleLen * 0.3, mantleH * 0.25, 3.5, 1.8, 0, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
@@ -690,17 +785,17 @@
       ctx.font = "bold 44px sans-serif";
       ctx.lineWidth = 5;
       ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.strokeText("Ink Bird", W / 2, H / 2 - 50);
-      ctx.fillText("Ink Bird", W / 2, H / 2 - 50);
+      ctx.strokeText("Ink Squid", W / 2, H / 2 - 50);
+      ctx.fillText("Ink Squid", W / 2, H / 2 - 50);
       ctx.font = "16px sans-serif";
-      ctx.fillText("Click / Tap / Space to flap", W / 2, H / 2);
-      ctx.fillText("Collect ink droplets for bonus", W / 2, H / 2 + 24);
+      ctx.fillText("Click / Tap / Space to jet", W / 2, H / 2);
+      ctx.fillText("Collect ink droplets!", W / 2, H / 2 + 24);
     } else if (state === STATE.DEAD) {
       ctx.font = "bold 40px sans-serif";
       ctx.lineWidth = 5;
       ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.strokeText("Splat!", W / 2, H / 2 - 70);
-      ctx.fillText("Splat!", W / 2, H / 2 - 70);
+      ctx.strokeText("Caught!", W / 2, H / 2 - 70);
+      ctx.fillText("Caught!", W / 2, H / 2 - 70);
 
       // Scorecard box.
       const bx = W / 2 - 110;

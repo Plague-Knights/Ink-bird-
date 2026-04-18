@@ -30,13 +30,13 @@ h1 {
 }
 
 canvas {
-  background: #0a0420;
-  border: 3px solid rgba(180, 140, 255, 0.5);
+  background: #041a3a;
+  border: 3px solid rgba(120, 200, 220, 0.5);
   border-radius: 10px;
   box-shadow:
-    0 0 0 4px rgba(10, 4, 32, 0.8),
-    0 30px 80px rgba(60, 20, 120, 0.45),
-    0 0 40px rgba(120, 70, 220, 0.25) inset;
+    0 0 0 4px rgba(4, 20, 44, 0.8),
+    0 30px 80px rgba(10, 60, 120, 0.45),
+    0 0 40px rgba(80, 160, 220, 0.25) inset;
   display: block;
   margin: 0 auto;
   touch-action: manipulation;
