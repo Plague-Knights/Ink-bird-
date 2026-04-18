@@ -77,12 +77,13 @@
   }
 
   const GRAVITY = 0.5;
-  const FLAP = -8.5;
-  const PIPE_GAP = 130;
-  const PIPE_WIDTH = 64;
-  const PIPE_SPEED = 3.2;
-  const PIPE_SPACING = 200;
+  const FLAP = -9;
+  const PIPE_GAP = 120;
+  const PIPE_WIDTH = 86;
+  const PIPE_SPEED = 3.3;
+  const PIPE_SPACING = 240;
   const GROUND_H = 72;
+  const HIT_R = 11;
 
   const STATE = { READY: 0, PLAYING: 1, DEAD: 2 };
 
@@ -129,7 +130,7 @@
   function reset() {
     state = STATE.READY;
     bird = {
-      x: W * 0.28,
+      x: W * 0.22,
       y: H * 0.45,
       vy: 0,
       r: 16,
@@ -245,6 +246,7 @@
 
     if (state === STATE.PLAYING) {
       bird.vy += GRAVITY;
+      if (bird.vy > 10) bird.vy = 10;
       bird.y += bird.vy;
       bird.rot = Math.max(-0.5, Math.min(1.4, bird.vy / 8));
       bird.flapPhase += bird.vy < 0 ? 0.6 : 0.3;
@@ -290,18 +292,18 @@
         }
       }
 
-      if (bird.y + bird.r >= H - GROUND_H) {
-        bird.y = H - GROUND_H - bird.r;
+      if (bird.y + HIT_R >= H - GROUND_H) {
+        bird.y = H - GROUND_H - HIT_R;
         die();
       }
-      if (bird.y - bird.r <= 0) {
-        bird.y = bird.r;
+      if (bird.y - HIT_R <= 0) {
+        bird.y = HIT_R;
         bird.vy = 0;
       }
 
       for (const p of pipes) {
-        if (bird.x + bird.r > p.x && bird.x - bird.r < p.x + PIPE_WIDTH) {
-          if (bird.y - bird.r < p.top || bird.y + bird.r > p.top + PIPE_GAP) {
+        if (bird.x + HIT_R > p.x && bird.x - HIT_R < p.x + PIPE_WIDTH) {
+          if (bird.y - HIT_R < p.top || bird.y + HIT_R > p.top + PIPE_GAP) {
             die();
             break;
           }
@@ -311,8 +313,8 @@
       bird.vy += GRAVITY;
       bird.y += bird.vy;
       bird.rot = Math.min(1.4, bird.rot + 0.05);
-      if (bird.y + bird.r >= H - GROUND_H) {
-        bird.y = H - GROUND_H - bird.r;
+      if (bird.y + HIT_R >= H - GROUND_H) {
+        bird.y = H - GROUND_H - HIT_R;
         bird.vy = 0;
       }
     }
