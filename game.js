@@ -76,12 +76,12 @@
     renderLeaderboard();
   }
 
-  const GRAVITY = 0.28;
-  const FLAP = -6.2;
-  const PIPE_GAP = 160;
+  const GRAVITY = 0.5;
+  const FLAP = -8.5;
+  const PIPE_GAP = 130;
   const PIPE_WIDTH = 64;
-  const PIPE_SPEED = 2.4;
-  const PIPE_SPACING = 220;
+  const PIPE_SPEED = 3.2;
+  const PIPE_SPACING = 200;
   const GROUND_H = 72;
 
   const STATE = { READY: 0, PLAYING: 1, DEAD: 2 };
@@ -246,11 +246,11 @@
     if (state === STATE.PLAYING) {
       bird.vy += GRAVITY;
       bird.y += bird.vy;
-      bird.rot = Math.max(-0.5, Math.min(1.2, bird.vy / 10));
+      bird.rot = Math.max(-0.5, Math.min(1.4, bird.vy / 8));
       bird.flapPhase += bird.vy < 0 ? 0.6 : 0.3;
 
       // Ink trail.
-      if (frame % 3 === 0) {
+      if (frame % 2 === 0) {
         trail.push({ x: bird.x - 10, y: bird.y + 4, r: rand(3, 5), life: 30 });
       }
       for (const t of trail) t.life--;
