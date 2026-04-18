@@ -8,21 +8,52 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Ink Squid</h1>
-    <p class="tag">Swim through the reef and collect ink droplets. One point per droplet.</p>
     <div class="stage">
-      <canvas id="game" width="480" height="640"></canvas>
+      <div class="game-col">
+        <h1>Ink Squid</h1>
+        <div class="canvas-wrap">
+          <canvas id="game" width="480" height="640"></canvas>
+
+          <div id="menuScreen" class="screen">
+            <div class="screen-inner">
+              <h2>INK SQUID</h2>
+              <p class="subtitle">Swim through the reef. Collect ink droplets.</p>
+              <button id="playBtn" class="big-btn" type="button">PLAY</button>
+              <p class="hint">Space / Tap / Click to swim</p>
+            </div>
+          </div>
+
+          <div id="deadScreen" class="screen hidden">
+            <div class="screen-inner card">
+              <h2 class="danger">CAUGHT!</h2>
+              <div class="stats">
+                <div class="stat"><span>Ink</span><b id="deadScore">0</b></div>
+                <div class="stat"><span>Best</span><b id="deadBest">0</b></div>
+              </div>
+              <div id="deadMedal" class="medal hidden"></div>
+              <button id="retryBtn" class="big-btn" type="button">PLAY AGAIN</button>
+            </div>
+          </div>
+
+          <div id="pauseScreen" class="screen hidden">
+            <div class="screen-inner">
+              <h2>PAUSED</h2>
+              <button id="resumeBtn" class="big-btn" type="button">RESUME</button>
+            </div>
+          </div>
+        </div>
+        <div class="hud">
+          <div>Score: <span id="score">0</span></div>
+          <div>Best: <span id="best">0</span></div>
+          <button id="pauseBtn" class="icon-btn" type="button" title="Pause (P)">PAUSE</button>
+        </div>
+      </div>
       <aside class="board">
         <h2>Top 10</h2>
         <ol id="leaderboard" class="leaderboard"></ol>
         <button id="clearBoard" class="clear" type="button">Clear</button>
       </aside>
     </div>
-    <div class="hud">
-      <div>Score: <span id="score">0</span></div>
-      <div>Best: <span id="best">0</span></div>
-    </div>
-    <p class="hint">Click / Tap / Space to flap. R to restart.</p>
   </div>
 
   <div id="entryModal" class="modal hidden" aria-hidden="true">

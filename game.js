@@ -14,6 +14,17 @@
   const saveInitialsBtn = document.getElementById("saveInitials");
   const skipInitialsBtn = document.getElementById("skipInitials");
 
+  const menuScreen = document.getElementById("menuScreen");
+  const deadScreen = document.getElementById("deadScreen");
+  const pauseScreen = document.getElementById("pauseScreen");
+  const playBtn = document.getElementById("playBtn");
+  const retryBtn = document.getElementById("retryBtn");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const resumeBtn = document.getElementById("resumeBtn");
+  const deadScoreEl = document.getElementById("deadScore");
+  const deadBestEl = document.getElementById("deadBest");
+  const deadMedalEl = document.getElementById("deadMedal");
+
   const LEADERBOARD_KEY = "inkbird.leaderboard";
   const LEADERBOARD_MAX = 10;
 
@@ -78,10 +89,11 @@
 
   const GRAVITY = 0.28;
   const FLAP = -6.2;
-  const PIPE_GAP = 160;
+  const TERMINAL_VY = 7.5; // Cap how fast the squid can fall.
+  const PIPE_GAP = 175;
   const PIPE_WIDTH = 64;
-  const PIPE_SPEED = 2.4;
-  const PIPE_SPACING = 220;
+  const PIPE_SPEED = 1.6;
+  const PIPE_SPACING = 240;
   const GROUND_H = 72;
 
   const STATE = { READY: 0, PLAYING: 1, DEAD: 2 };
@@ -99,8 +111,22 @@
   let frame;
   let groundX;
   let shake;
+  let paused = false;
 
   bestEl.textContent = best;
+
+  function showScreen(which) {
+    for (const s of [menuScreen, deadScreen, pauseScreen]) s.classList.add("hidden");
+    if (which) which.classList.remove("hidden");
+  }
+
+  function medalFor(s) {
+    if (s >= 50) return "platinum";
+    if (s >= 25) return "gold";
+    if (s >= 10) return "silver";
+    if (s >= 3) return "bronze";
+    return null;
+  }
 
   function rand(a, b) { return a + Math.random() * (b - a); }
 
@@ -163,9 +189,24 @@
     droplets.push({ x: dropX, y: dropY, r: 10, collected: false, bob: Math.random() * Math.PI * 2 });
   }
 
+  function startGame() {
+    paused = false;
+    reset();
+    showScreen(null);
+    state = STATE.PLAYING;
+    bird.vy = FLAP;
+  }
+
+  function togglePause() {
+    if (state !== STATE.PLAYING && !paused) return;
+    paused = !paused;
+    showScreen(paused ? pauseScreen : null);
+  }
+
   function flap() {
     if (!modal.classList.contains("hidden")) return;
-    if (state === STATE.READY) state = STATE.PLAYING;
+    if (paused) return;
+    if (state === STATE.READY) { startGame(); return; }
     if (state === STATE.PLAYING) {
       bird.vy = FLAP;
       bird.flapPhase = 0;
@@ -183,9 +224,8 @@
           kind: "puff",
         });
       }
-    } else if (state === STATE.DEAD) {
-      reset();
     }
+    // In DEAD state, taps/clicks/space are handled by the Retry button.
   }
 
   function splash(x, y, color) {
@@ -244,7 +284,7 @@
     }
 
     if (state === STATE.PLAYING) {
-      bird.vy += GRAVITY;
+      bird.vy = Math.min(TERMINAL_VY, bird.vy + GRAVITY);
       bird.y += bird.vy;
       bird.rot = Math.max(-0.5, Math.min(1.2, bird.vy / 10));
       bird.flapPhase += bird.vy < 0 ? 0.6 : 0.3;
@@ -329,9 +369,22 @@
       localStorage.setItem("inkbird.best", String(best));
       bestEl.textContent = best;
     }
-    if (qualifiesForLeaderboard(score)) {
-      promptForInitials(score);
+    deadScoreEl.textContent = score;
+    deadBestEl.textContent = best;
+    const medal = medalFor(score);
+    deadMedalEl.className = "medal";
+    if (medal) {
+      deadMedalEl.classList.add(medal);
+      deadMedalEl.textContent = medal.toUpperCase();
+    } else {
+      deadMedalEl.classList.add("hidden");
     }
+    // Delay the dead screen briefly so the splash animation is visible.
+    setTimeout(() => {
+      if (state !== STATE.DEAD) return;
+      showScreen(deadScreen);
+      if (qualifiesForLeaderboard(score)) promptForInitials(score);
+    }, 500);
   }
 
   function promptForInitials(finalScore) {
@@ -773,53 +826,8 @@
     ctx.restore();
   }
 
-  function drawOverlay() {
-    ctx.fillStyle = "rgba(10, 5, 25, 0.55)";
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.save();
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#fff";
-
-    if (state === STATE.READY) {
-      ctx.font = "bold 44px sans-serif";
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.strokeText("Ink Squid", W / 2, H / 2 - 50);
-      ctx.fillText("Ink Squid", W / 2, H / 2 - 50);
-      ctx.font = "16px sans-serif";
-      ctx.fillText("Click / Tap / Space to jet", W / 2, H / 2);
-      ctx.fillText("Collect ink droplets!", W / 2, H / 2 + 24);
-    } else if (state === STATE.DEAD) {
-      ctx.font = "bold 40px sans-serif";
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.strokeText("Caught!", W / 2, H / 2 - 70);
-      ctx.fillText("Caught!", W / 2, H / 2 - 70);
-
-      // Scorecard box.
-      const bx = W / 2 - 110;
-      const by = H / 2 - 30;
-      ctx.fillStyle = "rgba(20, 10, 40, 0.85)";
-      ctx.strokeStyle = "rgba(180,140,255,0.7)";
-      ctx.lineWidth = 2;
-      ctx.fillRect(bx, by, 220, 80);
-      ctx.strokeRect(bx, by, 220, 80);
-      ctx.fillStyle = "#fff";
-      ctx.font = "16px sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText(`Ink collected`, bx + 14, by + 32);
-      ctx.fillText(`Best`, bx + 14, by + 60);
-      ctx.textAlign = "right";
-      ctx.fillText(String(score), bx + 206, by + 32);
-      ctx.fillText(String(best), bx + 206, by + 60);
-
-      ctx.textAlign = "center";
-      ctx.font = "14px sans-serif";
-      ctx.fillText("Click or press R to retry", W / 2, H / 2 + 80);
-    }
-    ctx.restore();
-  }
+  // In-canvas overlays removed — READY, DEAD and PAUSED states are now
+  // shown via HTML overlays positioned over the canvas.
 
   function render() {
     ctx.save();
@@ -838,12 +846,11 @@
     drawBird();
     drawScoreBig();
     drawVignette();
-    if (state !== STATE.PLAYING) drawOverlay();
     ctx.restore();
   }
 
   function loop() {
-    update();
+    if (!paused) update();
     render();
     requestAnimationFrame(loop);
   }
@@ -856,11 +863,27 @@
     }
     if (e.code === "Space" || e.code === "ArrowUp") {
       e.preventDefault();
-      flap();
+      if (state === STATE.DEAD) retry();
+      else flap();
+    } else if (e.key === "p" || e.key === "P") {
+      e.preventDefault();
+      togglePause();
     } else if (e.key === "r" || e.key === "R") {
-      reset();
+      retry();
     }
   });
+
+  function retry() {
+    if (!modal.classList.contains("hidden")) return;
+    paused = false;
+    reset();
+    showScreen(menuScreen);
+  }
+
+  playBtn.addEventListener("click", (e) => { e.stopPropagation(); startGame(); });
+  retryBtn.addEventListener("click", (e) => { e.stopPropagation(); retry(); });
+  pauseBtn.addEventListener("click", () => togglePause());
+  resumeBtn.addEventListener("click", (e) => { e.stopPropagation(); togglePause(); });
 
   saveInitialsBtn.addEventListener("click", commitInitials);
   skipInitialsBtn.addEventListener("click", closeModal);
@@ -873,17 +896,26 @@
       renderLeaderboard();
     }
   });
-  canvas.addEventListener("mousedown", (e) => {
+
+  // Canvas input: flap while playing. While on the menu, any tap/click
+  // outside the Play button also starts the game.
+  function canvasTap(e) {
     e.preventDefault();
-    flap();
-  });
-  canvas.addEventListener("touchstart", (e) => {
-    e.preventDefault();
-    flap();
-  }, { passive: false });
+    if (state === STATE.READY) startGame();
+    else if (state === STATE.PLAYING) flap();
+  }
+  canvas.addEventListener("mousedown", canvasTap);
+  canvas.addEventListener("touchstart", canvasTap, { passive: false });
+  // Tapping anywhere on the menu/dead/pause overlays also triggers the
+  // primary action — the buttons call stopPropagation so they aren't
+  // clobbered.
+  menuScreen.addEventListener("click", () => startGame());
+  deadScreen.addEventListener("click", () => retry());
+  pauseScreen.addEventListener("click", () => togglePause());
 
   initParallax();
   renderLeaderboard();
   reset();
+  showScreen(menuScreen);
   loop();
 })();
