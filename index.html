@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Ink Squid</title>
+  <title>Ink Squid Arcade</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700;900&display=swap" />
@@ -11,6 +11,21 @@
 </head>
 <body>
   <div class="wrap">
+    <p class="tag">0.001 ETH on Ink for 100 tries. 90% to the weekly prize pool.</p>
+
+    <div class="arcade-bar">
+      <button id="connectWallet" type="button">Connect Wallet</button>
+      <span class="arcade-info">
+        <span id="walletAddress" class="muted">not connected</span>
+        <span class="sep">·</span>
+        <span>Credits: <strong id="creditBalance">0</strong></span>
+        <span class="sep">·</span>
+        <span>Week <strong id="weekId">—</strong> pool: <strong id="poolAmount">0</strong> ETH</span>
+      </span>
+      <button id="buyEntry" type="button" disabled>Pay 0.001 ETH · +100</button>
+      <button id="startRun" type="button" disabled>Start Run</button>
+    </div>
+
     <div class="stage">
       <div class="game-col">
         <h1>Ink Squid</h1>
@@ -52,26 +67,24 @@
         </div>
       </div>
       <aside class="board">
-        <h2>Top 10</h2>
+        <h2>Weekly Top 10</h2>
         <ol id="leaderboard" class="leaderboard"></ol>
-        <button id="clearBoard" class="clear" type="button">Clear</button>
+        <button id="refreshBoard" class="clear" type="button">Refresh</button>
       </aside>
     </div>
+    <p class="hint">Paid runs require a connected wallet and one credit. <a href="./claim.html">Claim a prize →</a></p>
   </div>
 
-  <div id="entryModal" class="modal hidden" aria-hidden="true">
-    <div class="modal-card">
-      <h3>New high score!</h3>
-      <p>Your score: <span id="entryScore">0</span></p>
-      <label for="initials">Initials (3 letters)</label>
-      <input id="initials" maxlength="3" autocomplete="off" spellcheck="false" />
-      <div class="modal-actions">
-        <button id="saveInitials" type="button">Save</button>
-        <button id="skipInitials" type="button" class="ghost">Skip</button>
-      </div>
-    </div>
-  </div>
-
-  <script src="game.js"></script>
+  <!-- Configure these two before opening the page:
+       data-arcade  = deployed contract address
+       data-backend = backend base URL (e.g. https://arcade.example.com) -->
+  <script
+    type="module"
+    src="arcade.js"
+    data-arcade="0x0000000000000000000000000000000000000000"
+    data-backend="http://localhost:8787"
+  ></script>
+  <script src="wallet-ui.js" defer></script>
+  <script src="game.js" defer></script>
 </body>
 </html>

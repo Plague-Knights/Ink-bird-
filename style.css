@@ -12,6 +12,8 @@
 
 * { box-sizing: border-box; }
 
+html, body { overflow-x: hidden; }
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -45,6 +47,117 @@ h1 {
   text-transform: uppercase;
   text-shadow: 0 0 24px rgba(95, 216, 255, 0.3);
 }
+
+.tag {
+  margin: 0 0 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  letter-spacing: 0.4px;
+}
+
+.arcade-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 720px;
+  margin: 0 auto 14px;
+  padding: 10px 14px;
+  background: rgba(20, 10, 40, 0.7);
+  border: 1px solid rgba(180, 140, 255, 0.35);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.arcade-bar button {
+  background: #7c4fd6;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.arcade-bar button:disabled {
+  background: #3d2d66;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: not-allowed;
+}
+
+.arcade-bar button:not(:disabled):hover { background: #9571e8; }
+
+.arcade-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: #d3c3ff;
+}
+
+.arcade-info .sep { opacity: 0.4; }
+.arcade-info .muted { opacity: 0.5; }
+.arcade-info strong { color: #fff; font-variant-numeric: tabular-nums; }
+
+.claim-card {
+  max-width: 520px;
+  margin: 20px auto;
+  padding: 20px 24px;
+  background: rgba(20, 10, 40, 0.7);
+  border: 1px solid rgba(180, 140, 255, 0.35);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+.claim-card label {
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.claim-card input {
+  width: 100%;
+  background: #0a0420;
+  color: #fff;
+  border: 1px solid rgba(180, 140, 255, 0.4);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 18px;
+  outline: none;
+}
+
+.claim-card input:focus { border-color: #c8b0ff; }
+
+.claim-card button {
+  background: #7c4fd6;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.claim-card button:disabled {
+  background: #3d2d66;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: not-allowed;
+}
+
+.claim-card button:not(:disabled):hover { background: #9571e8; }
+
+.claim-result { margin-top: 8px; }
+.claim-result .err { color: #ff8fa3; }
+.claim-result .claim-box { display: flex; flex-direction: column; gap: 6px; }
+.claim-result a { color: #c8b0ff; }
 
 .stage {
   display: flex;
@@ -534,4 +647,25 @@ body.modal-open {
   .board { width: 100%; max-width: 480px; }
   .screen h2 { font-size: 34px; letter-spacing: 4px; }
   h1 { font-size: 18px; letter-spacing: 6px; }
+}
+
+@media (max-width: 520px) {
+  .wrap { padding: 14px 10px; }
+  .arcade-bar {
+    padding: 8px 10px;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .arcade-bar button {
+    padding: 7px 10px;
+    font-size: 12px;
+    flex: 1 1 auto;
+  }
+  .arcade-info {
+    width: 100%;
+    justify-content: center;
+    gap: 6px;
+  }
+  .arcade-info .sep { display: none; }
+  .claim-card { padding: 14px 16px; }
 }

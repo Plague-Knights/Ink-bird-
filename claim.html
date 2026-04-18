@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ink Bird Arcade · Claim</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>Claim Prize</h1>
+    <p class="tag">Look up your winnings for a settled week and claim on-chain.</p>
+
+    <div class="arcade-bar">
+      <button id="connectWallet" type="button">Connect Wallet</button>
+      <span class="arcade-info">
+        <span id="walletAddress" class="muted">not connected</span>
+      </span>
+    </div>
+
+    <div class="claim-card">
+      <label for="weekInput">Week ID</label>
+      <input id="weekInput" type="number" min="0" placeholder="e.g. 3" />
+      <button id="lookupBtn" type="button" disabled>Look up</button>
+
+      <div id="result" class="claim-result"></div>
+    </div>
+
+    <p class="hint"><a href="./index.html">← back to the game</a></p>
+  </div>
+  <script type="module" src="claim.js"></script>
+</body>
+</html>

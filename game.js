@@ -7,12 +7,7 @@
   const scoreEl = document.getElementById("score");
   const bestEl = document.getElementById("best");
   const leaderboardEl = document.getElementById("leaderboard");
-  const clearBoardBtn = document.getElementById("clearBoard");
-  const modal = document.getElementById("entryModal");
-  const initialsInput = document.getElementById("initials");
-  const entryScoreEl = document.getElementById("entryScore");
-  const saveInitialsBtn = document.getElementById("saveInitials");
-  const skipInitialsBtn = document.getElementById("skipInitials");
+  const refreshBoardBtn = document.getElementById("refreshBoard");
 
   const menuScreen = document.getElementById("menuScreen");
   const deadScreen = document.getElementById("deadScreen");
@@ -25,66 +20,53 @@
   const deadBestEl = document.getElementById("deadBest");
   const deadMedalEl = document.getElementById("deadMedal");
 
-  const LEADERBOARD_KEY = "inkbird.leaderboard";
-  const LEADERBOARD_MAX = 10;
+  const arcadeCfg = document.querySelector('script[data-backend]')?.dataset || {};
+  let BACKEND = arcadeCfg.backend || "";
+  // Override from runtime config if present.
+  fetch("./config.json", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => { if (j?.backendUrl) BACKEND = j.backendUrl; })
+    .catch(() => {});
 
-  function loadLeaderboard() {
-    try {
-      const raw = localStorage.getItem(LEADERBOARD_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .filter((e) => e && typeof e.name === "string" && Number.isFinite(e.score))
-        .slice(0, LEADERBOARD_MAX);
-    } catch {
-      return [];
-    }
-  }
-
-  function saveLeaderboard(list) {
-    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list));
-  }
-
-  function renderLeaderboard() {
-    const list = loadLeaderboard();
+  async function renderLeaderboard() {
     leaderboardEl.innerHTML = "";
-    if (!list.length) {
+    if (!BACKEND) {
       const li = document.createElement("li");
       li.className = "empty";
-      li.textContent = "No scores yet";
+      li.textContent = "Backend not configured";
       leaderboardEl.appendChild(li);
       return;
     }
-    list.forEach((entry, i) => {
+    try {
+      const res = await fetch(`${BACKEND}/api/leaderboard`);
+      if (!res.ok) throw new Error("fetch failed");
+      const { entries } = await res.json();
+      if (!entries.length) {
+        const li = document.createElement("li");
+        li.className = "empty";
+        li.textContent = "No scores this week";
+        leaderboardEl.appendChild(li);
+        return;
+      }
+      entries.slice(0, 10).forEach((e, i) => {
+        const li = document.createElement("li");
+        li.className = `rank-${i + 1}`;
+        const name = document.createElement("span");
+        name.className = "name";
+        name.textContent = `${i + 1}. ${e.player.slice(0, 6)}…${e.player.slice(-4)}`;
+        const score = document.createElement("span");
+        score.className = "score";
+        score.textContent = String(e.score);
+        li.appendChild(name);
+        li.appendChild(score);
+        leaderboardEl.appendChild(li);
+      });
+    } catch {
       const li = document.createElement("li");
-      li.className = `rank-${i + 1}`;
-      const name = document.createElement("span");
-      name.className = "name";
-      name.textContent = `${i + 1}. ${entry.name}`;
-      const score = document.createElement("span");
-      score.className = "score";
-      score.textContent = String(entry.score);
-      li.appendChild(name);
-      li.appendChild(score);
+      li.className = "empty";
+      li.textContent = "Leaderboard unavailable";
       leaderboardEl.appendChild(li);
-    });
-  }
-
-  function qualifiesForLeaderboard(score) {
-    if (score <= 0) return false;
-    const list = loadLeaderboard();
-    if (list.length < LEADERBOARD_MAX) return true;
-    return score > list[list.length - 1].score;
-  }
-
-  function insertLeaderboardEntry(name, score) {
-    const list = loadLeaderboard();
-    list.push({ name, score, date: Date.now() });
-    list.sort((a, b) => b.score - a.score);
-    const trimmed = list.slice(0, LEADERBOARD_MAX);
-    saveLeaderboard(trimmed);
-    renderLeaderboard();
+    }
   }
 
   const GRAVITY = 0.28;
@@ -95,6 +77,7 @@
   const PIPE_SPEED = 1.6;
   const PIPE_SPACING = 240;
   const GROUND_H = 72;
+  const HIT_R = 11;
 
   const STATE = { READY: 0, PLAYING: 1, DEAD: 2 };
 
@@ -130,6 +113,12 @@
 
   function rand(a, b) { return a + Math.random() * (b - a); }
 
+  // Gameplay-critical RNG: uses the backend-issued session seed so runs can
+  // be replayed for anti-cheat. Falls back to Math.random for free play.
+  function gameRand() {
+    return window.inkArcade?.nextRandom?.() ?? Math.random();
+  }
+
   function initParallax() {
     // "stars" are reused as rising bubbles.
     stars = [];
@@ -155,7 +144,7 @@
   function reset() {
     state = STATE.READY;
     bird = {
-      x: W * 0.28,
+      x: W * 0.22,
       y: H * 0.45,
       vy: 0,
       r: 16,
@@ -180,13 +169,11 @@
     const margin = 60;
     const minTop = margin;
     const maxTop = H - GROUND_H - PIPE_GAP - margin;
-    const top = minTop + Math.random() * (maxTop - minTop);
-    // Always place a droplet centered in the gap — scoring is based on ink
-    // collected, so every pipe must give the player a chance to score.
+    const top = minTop + gameRand() * (maxTop - minTop);
     const dropX = x + PIPE_WIDTH / 2;
-    const dropY = top + PIPE_GAP / 2 + (Math.random() * 30 - 15);
+    const dropY = top + PIPE_GAP / 2 + (gameRand() * 30 - 15);
     pipes.push({ x, top, passed: false });
-    droplets.push({ x: dropX, y: dropY, r: 10, collected: false, bob: Math.random() * Math.PI * 2 });
+    droplets.push({ x: dropX, y: dropY, r: 10, collected: false, bob: gameRand() * Math.PI * 2 });
   }
 
   function startGame() {
@@ -204,10 +191,10 @@
   }
 
   function flap() {
-    if (!modal.classList.contains("hidden")) return;
     if (paused) return;
     if (state === STATE.READY) { startGame(); return; }
     if (state === STATE.PLAYING) {
+      window.inkArcade?.recordInput?.(frame);
       bird.vy = FLAP;
       bird.flapPhase = 0;
       // Bubble burst from the squid's mantle when it jets.
@@ -286,11 +273,11 @@
     if (state === STATE.PLAYING) {
       bird.vy = Math.min(TERMINAL_VY, bird.vy + GRAVITY);
       bird.y += bird.vy;
-      bird.rot = Math.max(-0.5, Math.min(1.2, bird.vy / 10));
+      bird.rot = Math.max(-0.5, Math.min(1.4, bird.vy / 8));
       bird.flapPhase += bird.vy < 0 ? 0.6 : 0.3;
 
       // Ink trail.
-      if (frame % 3 === 0) {
+      if (frame % 2 === 0) {
         trail.push({ x: bird.x - 10, y: bird.y + 4, r: rand(3, 5), life: 30 });
       }
       for (const t of trail) t.life--;
@@ -330,18 +317,18 @@
         }
       }
 
-      if (bird.y + bird.r >= H - GROUND_H) {
-        bird.y = H - GROUND_H - bird.r;
+      if (bird.y + HIT_R >= H - GROUND_H) {
+        bird.y = H - GROUND_H - HIT_R;
         die();
       }
-      if (bird.y - bird.r <= 0) {
-        bird.y = bird.r;
+      if (bird.y - HIT_R <= 0) {
+        bird.y = HIT_R;
         bird.vy = 0;
       }
 
       for (const p of pipes) {
-        if (bird.x + bird.r > p.x && bird.x - bird.r < p.x + PIPE_WIDTH) {
-          if (bird.y - bird.r < p.top || bird.y + bird.r > p.top + PIPE_GAP) {
+        if (bird.x + HIT_R > p.x && bird.x - HIT_R < p.x + PIPE_WIDTH) {
+          if (bird.y - HIT_R < p.top || bird.y + HIT_R > p.top + PIPE_GAP) {
             die();
             break;
           }
@@ -351,8 +338,8 @@
       bird.vy += GRAVITY;
       bird.y += bird.vy;
       bird.rot = Math.min(1.4, bird.rot + 0.05);
-      if (bird.y + bird.r >= H - GROUND_H) {
-        bird.y = H - GROUND_H - bird.r;
+      if (bird.y + HIT_R >= H - GROUND_H) {
+        bird.y = H - GROUND_H - HIT_R;
         bird.vy = 0;
       }
     }
@@ -379,49 +366,18 @@
     } else {
       deadMedalEl.classList.add("hidden");
     }
+    // Paid run: submit score to backend, then refresh leaderboard.
+    if (window.inkArcade?.hasSession?.()) {
+      const finalScore = score;
+      window.inkArcade.submitScore(finalScore)
+        .then(() => renderLeaderboard())
+        .catch((e) => console.warn("submit failed", e));
+    }
     // Delay the dead screen briefly so the splash animation is visible.
     setTimeout(() => {
       if (state !== STATE.DEAD) return;
       showScreen(deadScreen);
-      if (qualifiesForLeaderboard(score)) promptForInitials(score);
     }, 500);
-  }
-
-  let savedScrollY = 0;
-  function lockBodyScroll() {
-    savedScrollY = window.scrollY;
-    document.body.style.top = `-${savedScrollY}px`;
-    document.body.classList.add("modal-open");
-  }
-  function unlockBodyScroll() {
-    document.body.classList.remove("modal-open");
-    document.body.style.top = "";
-    window.scrollTo(0, savedScrollY);
-  }
-
-  function promptForInitials(finalScore) {
-    entryScoreEl.textContent = String(finalScore);
-    initialsInput.value = "";
-    modal.classList.remove("hidden");
-    modal.setAttribute("aria-hidden", "false");
-    lockBodyScroll();
-    // preventScroll stops the browser from scrolling the page to reveal
-    // the input when the keyboard opens on mobile.
-    setTimeout(() => initialsInput.focus({ preventScroll: true }), 50);
-  }
-
-  function closeModal() {
-    modal.classList.add("hidden");
-    modal.setAttribute("aria-hidden", "true");
-    initialsInput.blur();
-    unlockBodyScroll();
-  }
-
-  function commitInitials() {
-    const raw = (initialsInput.value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const name = (raw || "???").slice(0, 3).padEnd(3, "?");
-    insertLeaderboardEntry(name, score);
-    closeModal();
   }
 
   // ---------- Rendering ----------
@@ -923,11 +879,6 @@
   }
 
   window.addEventListener("keydown", (e) => {
-    if (!modal.classList.contains("hidden")) {
-      if (e.key === "Enter") { e.preventDefault(); commitInitials(); }
-      else if (e.key === "Escape") { e.preventDefault(); closeModal(); }
-      return;
-    }
     if (e.code === "Space" || e.code === "ArrowUp") {
       e.preventDefault();
       if (state === STATE.DEAD) retry();
@@ -941,7 +892,6 @@
   });
 
   function retry() {
-    if (!modal.classList.contains("hidden")) return;
     paused = false;
     reset();
     showScreen(menuScreen);
@@ -952,17 +902,9 @@
   pauseBtn.addEventListener("click", () => togglePause());
   resumeBtn.addEventListener("click", (e) => { e.stopPropagation(); togglePause(); });
 
-  saveInitialsBtn.addEventListener("click", commitInitials);
-  skipInitialsBtn.addEventListener("click", closeModal);
-  initialsInput.addEventListener("input", () => {
-    initialsInput.value = initialsInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
-  });
-  clearBoardBtn.addEventListener("click", () => {
-    if (confirm("Clear the leaderboard?")) {
-      saveLeaderboard([]);
-      renderLeaderboard();
-    }
-  });
+  refreshBoardBtn.addEventListener("click", () => renderLeaderboard());
+  // New paid session: reset the game so the first flap uses the session RNG.
+  window.addEventListener("inkarcade:session", () => reset());
 
   // Canvas input: flap while playing. While on the menu, any tap/click
   // outside the Play button also starts the game.
