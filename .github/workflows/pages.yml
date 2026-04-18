@@ -1,0 +1,51 @@
+name: deploy-pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write config.json from secrets
+        env:
+          ARCADE_ADDRESS: ${{ secrets.ARCADE_ADDRESS }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          EXPLORER_URL: ${{ vars.EXPLORER_URL || 'https://explorer.inkonchain.com' }}
+        run: |
+          cat > config.json <<EOF
+          {
+            "arcadeAddress": "${ARCADE_ADDRESS}",
+            "backendUrl": "${BACKEND_URL}",
+            "explorerUrl": "${EXPLORER_URL}"
+          }
+          EOF
+          # Assemble the publishable site: only static assets.
+          mkdir -p _site
+          cp index.html game.js arcade.js wallet-ui.js style.css config.json _site/
+          cp claim.html claim.js _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

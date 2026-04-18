@@ -7,13 +7,15 @@ import { issueSession, verifyToken, consumeSession } from "./sessions.js";
 import { validateRun } from "./scoreValidator.js";
 import { indexEntriesLoop } from "./indexer.js";
 import { publicClient, arcadeAddress, ARCADE_ABI } from "./chain.js";
+import { startAutoSettleLoop, getManifest } from "./autoSettle.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-// Kick off the on-chain indexer.
+// Kick off the on-chain indexer and the autosettle loop.
 indexEntriesLoop().catch((e) => console.error("indexer crashed", e));
+startAutoSettleLoop();
 
 // Current week from the contract.
 async function currentWeek() {
@@ -100,6 +102,29 @@ app.get("/api/leaderboard", async (req, res) => {
       LIMIT 100
     `).all(weekId);
     res.json({ weekId, entries: rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "server error" });
+  }
+});
+
+// Public claim proof lookup: returns the rank/amount/proof for a player
+// in a given settled week, or null if they didn't win.
+app.get("/api/claim/:weekId/:player", (req, res) => {
+  try {
+    const weekId = Number(req.params.weekId);
+    if (!isAddress(req.params.player)) return res.status(400).json({ error: "bad address" });
+    const player = getAddress(req.params.player);
+    const manifest = getManifest(weekId);
+    if (!manifest) return res.status(404).json({ error: "week not settled" });
+    const entry = manifest.rewards.find((r) => r.player.toLowerCase() === player.toLowerCase());
+    if (!entry) return res.json({ weekId, player, entry: null });
+    res.json({
+      weekId,
+      player,
+      root: manifest.root,
+      entry: { rank: entry.rank, amount: entry.amount, proof: entry.proof },
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "server error" });

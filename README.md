@@ -55,64 +55,78 @@ left unclaimed past 4 weeks) rolls into the next week.
 
 ## Deployment
 
-### 1. Contract
+This project is fully automated via GitHub Actions. You set repository
+secrets, push to `main`, and the frontend publishes itself. You stand
+up the backend once on any Node host. The contract is a one-time
+deploy.
+
+### 1. Contract (one-time)
 
 ```bash
 cd contracts
 cp .env.example .env
-# Fill in DEPLOYER_PRIVATE_KEY and OPERATOR_ADDRESS.
-# TREASURY_ADDRESS defaults to the configured treasury.
+# DEPLOYER_PRIVATE_KEY: fresh key with ~0.01 ETH on Ink for gas
+# OPERATOR_ADDRESS:     separate key; backend will use it weekly
 npm install
-npm test                        # run unit tests (local network)
-npm run deploy:mainnet          # deploy to Ink mainnet
+npm test                        # 9 unit tests, all must pass
+npm run deploy:mainnet          # prints the deployed address
 ```
 
-The deploy script prints the deployed address. Save it — you'll need it
-for both the backend (`ARCADE_ADDRESS`) and the frontend
-(`data-arcade` attribute in `index.html`).
+The `hardhat.config.js` uses a locally-installed `solc` so tests work
+offline too.
 
-### 2. Backend
+### 2. Backend (one-time, then long-running)
 
-Runs a single Node process that indexes on-chain entries, issues play
-sessions, validates score submissions, and publishes weekly settlement
-manifests.
+Indexes on-chain entries, issues play sessions, validates submissions,
+**automatically settles** each week once it ends, and serves claim
+proofs.
 
 ```bash
 cd backend
 cp .env.example .env
-# Fill in ARCADE_ADDRESS, OPERATOR_PRIVATE_KEY, SESSION_SECRET.
+# ARCADE_ADDRESS:        from step 1
+# OPERATOR_PRIVATE_KEY:  matches OPERATOR_ADDRESS from step 1
+# SESSION_SECRET:        strong random string, >= 32 chars
 npm install
 npm start                       # listens on $PORT (default 8787)
 ```
 
-Host it anywhere that can keep a long-lived process: Fly.io, Railway,
-a small VPS, or your own box. The operator key signs `settleWeek`
-transactions — guard it carefully; if it leaks, the owner can
-`vetoSettlement` during the 24-hour timelock and `rotateOperator` to a
-fresh key.
+Host it on anything that keeps a Node process alive: Fly.io, Railway,
+Render, a VPS. The autosettle loop runs every 10 minutes, detects
+finished-but-unsettled weeks, builds the Merkle tree, writes
+`manifests/week-<id>.json`, and submits `settleWeek` on-chain.
 
-Weekly settlement is a separate command that should be run after each
-week boundary (cron or manual):
-
+A one-shot manual settle is still available:
 ```bash
-cd backend
 npm run settle -- <weekId>
-# Writes week-<weekId>.json with per-player proofs. Publish that file
-# publicly so winners can find their proof and call claim().
 ```
 
-### 3. Frontend
+### 3. Frontend (GitHub Pages, auto)
 
-In `index.html`, edit the arcade `<script>` tag:
+Configure repository secrets:
 
-```html
-<script type="module" src="arcade.js"
-        data-arcade="0xDEPLOYED_CONTRACT_ADDRESS"
-        data-backend="https://your-backend-host"></script>
-```
+| Secret / Variable | Where | Value |
+|---|---|---|
+| `ARCADE_ADDRESS` | Secret | Deployed contract address |
+| `BACKEND_URL` | Secret | Public URL of your backend |
+| `EXPLORER_URL` | Variable | (optional) defaults to `https://explorer.inkonchain.com` |
 
-Serve the static files from anywhere (GitHub Pages, Cloudflare Pages, a
-plain bucket). No build step.
+Then enable Pages → Source: "GitHub Actions". Pushing to `main` triggers
+`.github/workflows/pages.yml`, which writes `config.json` from your
+secrets and publishes a site containing:
+
+- `index.html` — the game
+- `claim.html` — prize lookup + claim page
+
+For local dev, copy `config.example.json` to `config.json` and edit it.
+
+## Automation summary
+
+| Workflow | Trigger | Does |
+|---|---|---|
+| `ci.yml` | push/PR | `npx hardhat test` + JS syntax check |
+| `pages.yml` | push to `main` | Injects secrets → builds `_site/` → deploys to Pages |
+| Backend autosettle | every 10 min (in-process) | Settles any finished, unsettled week |
 
 ## Playing
 
@@ -126,10 +140,11 @@ plain bucket). No build step.
 
 ### Claiming a prize
 
-After a week is settled and the 24-hour timelock passes, winners find
-their proof in `week-<weekId>.json` and call `claim(weekId, amount, proof)`
-on the contract. A UI for this isn't included in v1 — use etherscan / a
-cast/forge call, or add a small claim page.
+Visit `claim.html`, connect your wallet, enter the settled week's ID,
+and click **Look up** to see your rank and amount. If the 24-hour
+timelock has passed, click **Claim on-chain** to call `claim()` with
+your Merkle proof — the backend serves the proof automatically from
+the autosettle manifest.
 
 ## Anti-cheat (v1)
 
@@ -146,13 +161,16 @@ The frontend ships with a seeded, deterministic RNG (`gameRand`) exposed
 from the arcade module, so adding a headless replay on the backend is
 the clean next step.
 
-## Operations checklist (weekly)
+## Operations (mostly automated)
 
-- [ ] Confirm the contract is not paused.
-- [ ] Run `npm run settle -- <weekId>` shortly after the week ends.
-- [ ] Publish `week-<weekId>.json` so winners can retrieve their proof.
-- [ ] Monitor the timelock window (24h) — `vetoSettlement` is available.
-- [ ] After 4 weeks, optionally `sweepUnclaimed` to roll dust forward.
+- Weekly settlement runs automatically inside the backend; manifests are
+  served at `/api/claim/:weekId/:player`.
+- Monitor the operator wallet's ETH balance so it can keep paying gas
+  for `settleWeek` txs.
+- 24-hour veto window: if a bad root lands, owner calls
+  `vetoSettlement(weekId)` to roll the pool forward.
+- After 4 weeks, owner can call `sweepUnclaimed(weekId)` for any dust.
+- Owner may `setPaused(true)` to halt new entries if something looks wrong.
 
 ## Risk disclosure
 

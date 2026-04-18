@@ -10,7 +10,12 @@
   const refreshBoardBtn = document.getElementById("refreshBoard");
 
   const arcadeCfg = document.querySelector('script[data-backend]')?.dataset || {};
-  const BACKEND = arcadeCfg.backend || "";
+  let BACKEND = arcadeCfg.backend || "";
+  // Override from runtime config if present.
+  fetch("./config.json", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => { if (j?.backendUrl) BACKEND = j.backendUrl; })
+    .catch(() => {});
 
   async function renderLeaderboard() {
     leaderboardEl.innerHTML = "";

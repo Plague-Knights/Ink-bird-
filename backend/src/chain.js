@@ -47,6 +47,20 @@ export const ARCADE_ABI = [
     inputs: [{ type: "uint256" }],
     outputs: [{ type: "uint256" }],
   },
+  {
+    type: "function",
+    name: "weekSettledAt",
+    stateMutability: "view",
+    inputs: [{ type: "uint256" }],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "weekRoot",
+    stateMutability: "view",
+    inputs: [{ type: "uint256" }],
+    outputs: [{ type: "bytes32" }],
+  },
 ];
 
 export function publicClient() {
