@@ -5,8 +5,76 @@
   const H = canvas.height;
 
   const scoreEl = document.getElementById("score");
-  const inkEl = document.getElementById("ink");
   const bestEl = document.getElementById("best");
+  const leaderboardEl = document.getElementById("leaderboard");
+  const clearBoardBtn = document.getElementById("clearBoard");
+  const modal = document.getElementById("entryModal");
+  const initialsInput = document.getElementById("initials");
+  const entryScoreEl = document.getElementById("entryScore");
+  const saveInitialsBtn = document.getElementById("saveInitials");
+  const skipInitialsBtn = document.getElementById("skipInitials");
+
+  const LEADERBOARD_KEY = "inkbird.leaderboard";
+  const LEADERBOARD_MAX = 10;
+
+  function loadLeaderboard() {
+    try {
+      const raw = localStorage.getItem(LEADERBOARD_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((e) => e && typeof e.name === "string" && Number.isFinite(e.score))
+        .slice(0, LEADERBOARD_MAX);
+    } catch {
+      return [];
+    }
+  }
+
+  function saveLeaderboard(list) {
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list));
+  }
+
+  function renderLeaderboard() {
+    const list = loadLeaderboard();
+    leaderboardEl.innerHTML = "";
+    if (!list.length) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "No scores yet";
+      leaderboardEl.appendChild(li);
+      return;
+    }
+    list.forEach((entry, i) => {
+      const li = document.createElement("li");
+      li.className = `rank-${i + 1}`;
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = `${i + 1}. ${entry.name}`;
+      const score = document.createElement("span");
+      score.className = "score";
+      score.textContent = String(entry.score);
+      li.appendChild(name);
+      li.appendChild(score);
+      leaderboardEl.appendChild(li);
+    });
+  }
+
+  function qualifiesForLeaderboard(score) {
+    if (score <= 0) return false;
+    const list = loadLeaderboard();
+    if (list.length < LEADERBOARD_MAX) return true;
+    return score > list[list.length - 1].score;
+  }
+
+  function insertLeaderboardEntry(name, score) {
+    const list = loadLeaderboard();
+    list.push({ name, score, date: Date.now() });
+    list.sort((a, b) => b.score - a.score);
+    const trimmed = list.slice(0, LEADERBOARD_MAX);
+    saveLeaderboard(trimmed);
+    renderLeaderboard();
+  }
 
   const GRAVITY = 0.45;
   const FLAP = -7.8;
@@ -27,7 +95,6 @@
   let stars;
   let hills;
   let score;
-  let ink;
   let best = parseInt(localStorage.getItem("inkbird.best") || "0", 10);
   let frame;
   let groundX;
@@ -68,12 +135,10 @@
     particles = [];
     trail = [];
     score = 0;
-    ink = 0;
     frame = 0;
     groundX = 0;
     shake = 0;
     scoreEl.textContent = score;
-    inkEl.textContent = ink;
     spawnPipe(W + 60);
     spawnPipe(W + 60 + PIPE_SPACING);
     spawnPipe(W + 60 + PIPE_SPACING * 2);
@@ -84,16 +149,16 @@
     const minTop = margin;
     const maxTop = H - GROUND_H - PIPE_GAP - margin;
     const top = minTop + Math.random() * (maxTop - minTop);
+    // Always place a droplet centered in the gap — scoring is based on ink
+    // collected, so every pipe must give the player a chance to score.
+    const dropX = x + PIPE_WIDTH / 2;
+    const dropY = top + PIPE_GAP / 2 + (Math.random() * 30 - 15);
     pipes.push({ x, top, passed: false });
-
-    if (Math.random() < 0.85) {
-      const dropX = x + PIPE_WIDTH / 2 + (Math.random() * 40 - 20);
-      const dropY = top + PIPE_GAP / 2 + (Math.random() * 40 - 20);
-      droplets.push({ x: dropX, y: dropY, r: 10, collected: false, bob: Math.random() * Math.PI * 2 });
-    }
+    droplets.push({ x: dropX, y: dropY, r: 10, collected: false, bob: Math.random() * Math.PI * 2 });
   }
 
   function flap() {
+    if (!modal.classList.contains("hidden")) return;
     if (state === STATE.READY) state = STATE.PLAYING;
     if (state === STATE.PLAYING) {
       bird.vy = FLAP;
@@ -195,22 +260,22 @@
         spawnPipe(last.x + PIPE_SPACING);
       }
 
+      // Track pipe passes only for stats (pipes don't score).
       for (const p of pipes) {
         if (!p.passed && p.x + PIPE_WIDTH < bird.x - bird.r) {
           p.passed = true;
-          score += 1;
-          scoreEl.textContent = score;
         }
       }
 
+      // Scoring: one point per ink droplet collected. Nothing else.
       for (const d of droplets) {
         if (d.collected) continue;
         const dx = d.x - bird.x;
         const dy = d.y - bird.y;
         if (dx * dx + dy * dy < (d.r + bird.r) * (d.r + bird.r)) {
           d.collected = true;
-          ink += 1;
-          inkEl.textContent = ink;
+          score += 1;
+          scoreEl.textContent = score;
           splash(d.x, d.y, "rgba(40, 20, 80, 0.9)");
         }
       }
@@ -249,12 +314,34 @@
     shake = 14;
     splash(bird.x, bird.y, "rgba(30, 10, 60, 0.9)");
     splash(bird.x, bird.y, "rgba(120, 60, 200, 0.8)");
-    const total = score + ink * 2;
-    if (total > best) {
-      best = total;
+    if (score > best) {
+      best = score;
       localStorage.setItem("inkbird.best", String(best));
       bestEl.textContent = best;
     }
+    if (qualifiesForLeaderboard(score)) {
+      promptForInitials(score);
+    }
+  }
+
+  function promptForInitials(finalScore) {
+    entryScoreEl.textContent = String(finalScore);
+    initialsInput.value = "";
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    setTimeout(() => initialsInput.focus(), 0);
+  }
+
+  function closeModal() {
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+  }
+
+  function commitInitials() {
+    const raw = (initialsInput.value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const name = (raw || "???").slice(0, 3).padEnd(3, "?");
+    insertLeaderboardEntry(name, score);
+    closeModal();
   }
 
   // ---------- Rendering ----------
@@ -616,29 +703,25 @@
       ctx.fillText("Splat!", W / 2, H / 2 - 70);
 
       // Scorecard box.
-      const bx = W / 2 - 120;
-      const by = H / 2 - 40;
+      const bx = W / 2 - 110;
+      const by = H / 2 - 30;
       ctx.fillStyle = "rgba(20, 10, 40, 0.85)";
       ctx.strokeStyle = "rgba(180,140,255,0.7)";
       ctx.lineWidth = 2;
-      ctx.fillRect(bx, by, 240, 120);
-      ctx.strokeRect(bx, by, 240, 120);
+      ctx.fillRect(bx, by, 220, 80);
+      ctx.strokeRect(bx, by, 220, 80);
       ctx.fillStyle = "#fff";
       ctx.font = "16px sans-serif";
       ctx.textAlign = "left";
-      ctx.fillText(`Pipes cleared`, bx + 14, by + 28);
-      ctx.fillText(`Ink collected`, bx + 14, by + 52);
-      ctx.fillText(`Total`, bx + 14, by + 82);
-      ctx.fillText(`Best`, bx + 14, by + 106);
+      ctx.fillText(`Ink collected`, bx + 14, by + 32);
+      ctx.fillText(`Best`, bx + 14, by + 60);
       ctx.textAlign = "right";
-      ctx.fillText(String(score), bx + 226, by + 28);
-      ctx.fillText(String(ink), bx + 226, by + 52);
-      ctx.fillText(String(score + ink * 2), bx + 226, by + 82);
-      ctx.fillText(String(best), bx + 226, by + 106);
+      ctx.fillText(String(score), bx + 206, by + 32);
+      ctx.fillText(String(best), bx + 206, by + 60);
 
       ctx.textAlign = "center";
       ctx.font = "14px sans-serif";
-      ctx.fillText("Click or press R to retry", W / 2, H / 2 + 108);
+      ctx.fillText("Click or press R to retry", W / 2, H / 2 + 80);
     }
     ctx.restore();
   }
@@ -671,11 +754,28 @@
   }
 
   window.addEventListener("keydown", (e) => {
+    if (!modal.classList.contains("hidden")) {
+      if (e.key === "Enter") { e.preventDefault(); commitInitials(); }
+      else if (e.key === "Escape") { e.preventDefault(); closeModal(); }
+      return;
+    }
     if (e.code === "Space" || e.code === "ArrowUp") {
       e.preventDefault();
       flap();
     } else if (e.key === "r" || e.key === "R") {
       reset();
+    }
+  });
+
+  saveInitialsBtn.addEventListener("click", commitInitials);
+  skipInitialsBtn.addEventListener("click", closeModal);
+  initialsInput.addEventListener("input", () => {
+    initialsInput.value = initialsInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3);
+  });
+  clearBoardBtn.addEventListener("click", () => {
+    if (confirm("Clear the leaderboard?")) {
+      saveLeaderboard([]);
+      renderLeaderboard();
     }
   });
   canvas.addEventListener("mousedown", (e) => {
@@ -688,6 +788,7 @@
   }, { passive: false });
 
   initParallax();
+  renderLeaderboard();
   reset();
   loop();
 })();

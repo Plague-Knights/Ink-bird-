@@ -9,15 +9,35 @@
 <body>
   <div class="wrap">
     <h1>Ink Bird</h1>
-    <p class="tag">Flap through the pipes and collect ink droplets.</p>
-    <canvas id="game" width="480" height="640"></canvas>
+    <p class="tag">Flap through the pipes and collect ink droplets. One point per droplet.</p>
+    <div class="stage">
+      <canvas id="game" width="480" height="640"></canvas>
+      <aside class="board">
+        <h2>Top 10</h2>
+        <ol id="leaderboard" class="leaderboard"></ol>
+        <button id="clearBoard" class="clear" type="button">Clear</button>
+      </aside>
+    </div>
     <div class="hud">
       <div>Score: <span id="score">0</span></div>
-      <div>Ink: <span id="ink">0</span></div>
       <div>Best: <span id="best">0</span></div>
     </div>
     <p class="hint">Click / Tap / Space to flap. R to restart.</p>
   </div>
+
+  <div id="entryModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-card">
+      <h3>New high score!</h3>
+      <p>Your score: <span id="entryScore">0</span></p>
+      <label for="initials">Initials (3 letters)</label>
+      <input id="initials" maxlength="3" autocomplete="off" spellcheck="false" />
+      <div class="modal-actions">
+        <button id="saveInitials" type="button">Save</button>
+        <button id="skipInitials" type="button" class="ghost">Skip</button>
+      </div>
+    </div>
+  </div>
+
   <script src="game.js"></script>
 </body>
 </html>
