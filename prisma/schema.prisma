@@ -1,0 +1,52 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// One row per attempt consumed. `seed` is issued by the server when the
+// client calls /api/attempts/start; the client plays with that seed and
+// submits {inputs[], claimedScore}. On /api/replay/submit, the server
+// re-simulates and writes the final `score` here. Unsubmitted rows
+// (score=null) are counted as consumed — no double-spending the attempt.
+model Attempt {
+  id            String   @id @default(cuid())
+  address       String
+  weekId        Int
+  seed          String   // hex, 16 chars = 64 bits
+  inputs        Json?    // array of { f: frame, t: 'flap' }
+  claimedScore  Int?
+  score         Int?     // server-computed after replay
+  valid         Boolean?
+  createdAt     DateTime @default(now())
+  submittedAt   DateTime?
+
+  @@index([address, weekId])
+  @@index([weekId, score(sort: Desc)])
+}
+
+// Weekly settlement record. Written when /api/admin/settle runs, before the
+// settleWeek() tx is sent. Stores per-address payouts + merkle proofs so
+// /api/claim-proof can serve them without recomputing.
+model Settlement {
+  weekId        Int      @id
+  root          String   // 0x-prefixed bytes32
+  totalPayout   String   // wei as string
+  settledAt     DateTime @default(now())
+  txHash        String?
+  claims        ClaimProof[]
+}
+
+model ClaimProof {
+  id            String   @id @default(cuid())
+  weekId        Int
+  address       String
+  amount        String   // wei as string
+  proof         Json     // array of 0x-prefixed bytes32
+  settlement    Settlement @relation(fields: [weekId], references: [weekId], onDelete: Cascade)
+
+  @@unique([weekId, address])
+  @@index([address])
+}
