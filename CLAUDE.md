@@ -51,13 +51,18 @@ Unsubmitted attempts (`submittedAt = null`) are still counted as consumed, so an
 
 ### Settlement (end-of-week)
 
-`POST /api/admin/settle?week=<weekId>` — gated by `x-admin-secret` header matching `ADMIN_SECRET` env var. Runs the full pipeline:
-- Read on-chain `weeks_(weekId).pool`
-- Pull ranked leaderboard from `Attempt`
-- Apply `PAYOUT_CURVE_BPS` via `computePayouts()` in `src/lib/payouts.ts`
-- Build merkle tree via `src/lib/merkle.ts`
-- Call `settleWeek(weekId, root)` from `SETTLER_PRIVATE_KEY`
-- Write `Settlement` + `ClaimProof` rows
+Settlement is split across server (DB) and admin laptop (chain) so the
+settler private key never sits on the web process. Compromise of the web
+tier can't move treasury funds; at worst it can gate the DB phase.
+
+Server endpoints (both gated by `x-admin-secret` matching `ADMIN_SECRET`):
+
+- `POST /api/admin/settle?week=<weekId>` — reads on-chain `weeks_(weekId).pool`, pulls the ranked leaderboard, applies `PAYOUT_CURVE_BPS` via `computePayouts()`, builds the merkle tree via `src/lib/merkle.ts`, and writes `Settlement(txHash=null)` + `ClaimProof` rows in one transaction. Returns `{ root, totalPayout, winners }`. Idempotent — re-invoking returns the same stored root so nothing shifts under already-written proofs.
+- `POST /api/admin/settle/record` — body `{ weekId, txHash }`. Patches the stored `Settlement.txHash` after the tx lands. Rejects overwrites that would replace an existing hash with a different one.
+
+Admin CLI: `scripts/settle-week.ts` (run locally with `pnpm exec tsx`)
+- Reads `API_URL`, `ADMIN_SECRET`, `SETTLER_PRIVATE_KEY`, `INK_NETWORK` from the local env only
+- Calls prepare → signs + broadcasts `settleWeek(weekId, root)` → calls record
 
 `GET /api/claim-proof?week=X&address=Y` — returns the stored proof for a winner. Public (proofs aren't secret).
 
