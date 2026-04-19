@@ -530,6 +530,7 @@ export function Game({ canStart, onBeforeStart, onGameOver }: GameProps) {
     const onKey = (e: KeyboardEvent) => {
       if (e.code === "Space" || e.code === "ArrowUp") {
         e.preventDefault();
+        if (e.repeat) return;
         if (uiRef.current === UI_STATE.DEAD) retry();
         else if (uiRef.current === UI_STATE.MENU) startGame();
         else flap();
@@ -544,7 +545,7 @@ export function Game({ canStart, onBeforeStart, onGameOver }: GameProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [flap, retry, startGame, togglePause]);
 
-  const onCanvasTap = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+  const onCanvasTap = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     if (uiRef.current === UI_STATE.MENU) {
       // Paid is the default on tap if the player has attempts, otherwise
@@ -563,8 +564,7 @@ export function Game({ canStart, onBeforeStart, onGameOver }: GameProps) {
         id="game"
         width={W}
         height={H}
-        onMouseDown={onCanvasTap}
-        onTouchStart={onCanvasTap}
+        onPointerDown={onCanvasTap}
       />
 
       {ui === UI_STATE.MENU && (
