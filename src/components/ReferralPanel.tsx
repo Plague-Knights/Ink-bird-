@@ -33,7 +33,7 @@ export function ReferralPanel() {
     <div className="panel">
       <h3 className="panel-title">Referral link - earn {pct}%</h3>
       <div className="ref-row">
-        <code className="ref-link" title={link}>{link}</code>
+        <span className="ref-link" title={link}>{link}</span>
         <button className="icon-btn" onClick={copy} type="button">
           {copied ? "COPIED" : "COPY"}
         </button>
