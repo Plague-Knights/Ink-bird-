@@ -20,6 +20,11 @@ const MIN_FLAP_GAP_FRAMES = 3;
 // Real-world network + scheduler slack allowed on top of pure gameplay time.
 const WALL_CLOCK_SLACK_MS = 2000;
 
+// Hard payload cap. A max-length input log (36k events × ~20B JSON) is
+// ~720KB; anything above 1MB is either malformed or an attempt to DoS the
+// JSON parser.
+const MAX_BODY_BYTES = 1_000_000;
+
 async function invalidate(id: string, inputs: SimInput[]) {
   await prisma.attempt.update({
     where: { id },
@@ -38,6 +43,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
   const address = session.address.toLowerCase();
+
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_BODY_BYTES) {
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
 
   let body: Body;
   try {

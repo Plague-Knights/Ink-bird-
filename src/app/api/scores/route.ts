@@ -19,14 +19,24 @@ export async function GET() {
     // Contract not deployed — fall through with weekId=0; returns empty board.
   }
 
+  // Tiebreaker matches admin/settle exactly so the displayed leaderboard
+  // reflects the same ranking used for payouts: best score per address,
+  // ties broken by earliest submission, then by address.
   const rows = await prisma.$queryRaw<
     { address: string; score: number }[]
   >`
-    SELECT address, MAX(score) AS score
-    FROM "Attempt"
-    WHERE "weekId" = ${weekId} AND valid = true AND score IS NOT NULL
-    GROUP BY address
-    ORDER BY score DESC
+    WITH best AS (
+      SELECT DISTINCT ON (address)
+        address, score, "submittedAt"
+      FROM "Attempt"
+      WHERE "weekId" = ${weekId}
+        AND valid = true
+        AND score IS NOT NULL
+      ORDER BY address, score DESC, "submittedAt" ASC
+    )
+    SELECT address, score
+    FROM best
+    ORDER BY score DESC, "submittedAt" ASC, address ASC
     LIMIT 20
   `;
 
