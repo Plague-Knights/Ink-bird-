@@ -9,6 +9,29 @@ type Body = {
   claimedScore?: unknown;
 };
 
+// Seeds older than this are stale — prevents attackers from harvesting
+// seeds and submitting solved runs hours/days later.
+const ATTEMPT_TTL_MS = 30 * 60 * 1000;
+
+// Minimum frame gap between consecutive flaps. 3 frames ≈ 50ms at 60Hz;
+// humans tap at most ~10/sec (~6 frames). Anything tighter is a bot.
+const MIN_FLAP_GAP_FRAMES = 3;
+
+// Real-world network + scheduler slack allowed on top of pure gameplay time.
+const WALL_CLOCK_SLACK_MS = 2000;
+
+async function invalidate(id: string, inputs: SimInput[]) {
+  await prisma.attempt.update({
+    where: { id },
+    data: {
+      inputs: inputs as unknown as object,
+      score: 0,
+      valid: false,
+      submittedAt: new Date(),
+    },
+  });
+}
+
 export async function POST(req: Request) {
   const session = await getSession();
   if (!session.address) {
@@ -51,8 +74,31 @@ export async function POST(req: Request) {
   if (attempt.address !== address) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   if (attempt.submittedAt) return NextResponse.json({ error: "Already submitted" }, { status: 409 });
 
+  const now = Date.now();
+  const age = now - attempt.createdAt.getTime();
+
+  if (age > ATTEMPT_TTL_MS) {
+    await invalidate(attempt.id, inputs);
+    return NextResponse.json({ error: "Attempt expired" }, { status: 410 });
+  }
+
+  const sortedInputs = [...inputs].sort((a, b) => a.f - b.f);
+  for (let i = 1; i < sortedInputs.length; i++) {
+    if (sortedInputs[i].f - sortedInputs[i - 1].f < MIN_FLAP_GAP_FRAMES) {
+      await invalidate(attempt.id, inputs);
+      return NextResponse.json({ error: "Impossible input cadence" }, { status: 400 });
+    }
+  }
+
   const seed = parseInt(attempt.seed, 16);
   const result = replay(seed, inputs);
+
+  const gameplayFrames = result.deadAtFrame ?? result.framesRun;
+  const minWallClockMs = (gameplayFrames / 60) * 1000 - WALL_CLOCK_SLACK_MS;
+  if (age < minWallClockMs) {
+    await invalidate(attempt.id, inputs);
+    return NextResponse.json({ error: "Replay too fast for wall-clock" }, { status: 400 });
+  }
 
   const claimedScore = Number.isInteger(body.claimedScore) ? (body.claimedScore as number) : null;
   const valid = claimedScore !== null && claimedScore === result.score;

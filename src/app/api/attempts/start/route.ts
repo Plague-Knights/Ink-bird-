@@ -43,6 +43,14 @@ export async function POST() {
     return NextResponse.json({ error: "No attempts remaining" }, { status: 402 });
   }
 
+  // Only one unsubmitted attempt may be outstanding per address. Prevents
+  // parallel seed harvesting while letting users who crashed mid-run start
+  // fresh — the old attempt is marked invalid and still counts as consumed.
+  await prisma.attempt.updateMany({
+    where: { address, submittedAt: null },
+    data: { valid: false, submittedAt: new Date() },
+  });
+
   // Server-generated 32-bit seed. Fits in a single Mulberry32 state word.
   const seed = Math.floor(Math.random() * 0xffffffff);
 
