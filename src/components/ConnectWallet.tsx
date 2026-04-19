@@ -2,7 +2,8 @@
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useCallback, useEffect, useState } from "react";
-import { useAccount, useChainId, useSignMessage } from "wagmi";
+import { useAccount, useChainId, useSignMessage, useSwitchChain } from "wagmi";
+import { activeChain } from "@/config/wagmi";
 
 type AuthState =
   | { status: "loading" }
@@ -13,9 +14,19 @@ export function ConnectWallet() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { signMessageAsync } = useSignMessage();
+  const { switchChain, isPending: switching } = useSwitchChain();
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const onWrongChain = isConnected && chainId !== activeChain.id;
+
+  // Triggers wallet_switchEthereumChain. If the chain isn't in the wallet,
+  // wagmi falls back to wallet_addEthereumChain automatically — MetaMask,
+  // Rainbow, Coinbase, WalletConnect all handle this.
+  const addOrSwitchChain = useCallback(() => {
+    switchChain({ chainId: activeChain.id });
+  }, [switchChain]);
 
   const refreshSession = useCallback(async () => {
     try {
@@ -87,7 +98,18 @@ export function ConnectWallet() {
   return (
     <div className="wallet">
       <ConnectButton chainStatus="icon" showBalance={false} />
-      {isConnected && auth.status === "signed-out" && (
+      {onWrongChain && (
+        <button
+          className="icon-btn wrong-chain-btn"
+          onClick={addOrSwitchChain}
+          disabled={switching}
+          type="button"
+          title={`Add / switch to ${activeChain.name}`}
+        >
+          {switching ? "Switching…" : `Add ${activeChain.name}`}
+        </button>
+      )}
+      {isConnected && !onWrongChain && auth.status === "signed-out" && (
         <button className="icon-btn" onClick={signIn} disabled={busy} type="button">
           {busy ? "Signing…" : "Sign in"}
         </button>

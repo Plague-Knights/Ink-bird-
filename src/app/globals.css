@@ -275,6 +275,16 @@ canvas {
 .icon-btn:hover { background: rgba(95, 216, 255, 0.12); border-color: rgba(95, 216, 255, 0.4); }
 .icon-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.wrong-chain-btn {
+  background: rgba(255, 140, 80, 0.15);
+  border-color: rgba(255, 170, 90, 0.45);
+  color: #ffcba4;
+}
+.wrong-chain-btn:hover {
+  background: rgba(255, 140, 80, 0.22);
+  border-color: rgba(255, 170, 90, 0.65);
+}
+
 .board {
   width: 240px; flex-shrink: 0;
   background: var(--card-bg);
