@@ -1,46 +1,27 @@
 "use client";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useAccount, useChainId, useSignMessage, useSwitchChain } from "wagmi";
 import { activeChain } from "@/config/wagmi";
-
-type AuthState =
-  | { status: "loading" }
-  | { status: "signed-out" }
-  | { status: "signed-in"; address: `0x${string}` };
+import { useAuth } from "@/lib/useSession";
 
 export function ConnectWallet() {
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
   const { signMessageAsync } = useSignMessage();
   const { switchChain, isPending: switching } = useSwitchChain();
-  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+  const { signedIn, refresh: refreshSession } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onWrongChain = isConnected && chainId !== activeChain.id;
 
   // Triggers wallet_switchEthereumChain. If the chain isn't in the wallet,
-  // wagmi falls back to wallet_addEthereumChain automatically — MetaMask,
-  // Rainbow, Coinbase, WalletConnect all handle this.
+  // wagmi falls back to wallet_addEthereumChain automatically.
   const addOrSwitchChain = useCallback(() => {
     switchChain({ chainId: activeChain.id });
   }, [switchChain]);
-
-  const refreshSession = useCallback(async () => {
-    try {
-      const res = await fetch("/api/auth/me", { cache: "no-store" });
-      const data = await res.json();
-      setAuth(data.address ? { status: "signed-in", address: data.address } : { status: "signed-out" });
-    } catch {
-      setAuth({ status: "signed-out" });
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshSession();
-  }, [refreshSession]);
 
   const signIn = useCallback(async () => {
     if (!address) return;
@@ -109,12 +90,12 @@ export function ConnectWallet() {
           {switching ? "Switching…" : `Add ${activeChain.name}`}
         </button>
       )}
-      {isConnected && !onWrongChain && auth.status === "signed-out" && (
+      {isConnected && !onWrongChain && !signedIn && (
         <button className="icon-btn" onClick={signIn} disabled={busy} type="button">
           {busy ? "Signing…" : "Sign in"}
         </button>
       )}
-      {auth.status === "signed-in" && (
+      {signedIn && (
         <button className="icon-btn" onClick={signOut} disabled={busy} type="button">
           Sign out
         </button>

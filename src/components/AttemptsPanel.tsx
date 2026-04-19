@@ -1,20 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useAccount, useReadContract, useWriteContract } from "wagmi";
 import { formatEther, parseEther } from "viem";
+import { useState } from "react";
 import { activeContracts } from "@/lib/chain";
 import { InkSquidArcadeAbi } from "@/config/abis/InkSquidArcade";
+import { useAttempts, useAuth } from "@/lib/useSession";
 
-export function AttemptsPanel({
-  signedIn,
-  onChange,
-}: {
-  signedIn: boolean;
-  onChange?: () => void;
-}) {
+export function AttemptsPanel() {
   const { address } = useAccount();
-  const [remaining, setRemaining] = useState<number | null>(null);
+  const { signedIn } = useAuth();
+  const { remaining, loaded, refresh: refreshAttempts } = useAttempts();
   const [packs, setPacks] = useState(1);
 
   const { writeContract, isPending, data: txHash } = useWriteContract();
@@ -26,24 +23,13 @@ export function AttemptsPanel({
     query: { refetchInterval: 20_000 },
   });
 
-  const refresh = useCallback(async () => {
-    if (!signedIn) { setRemaining(null); return; }
-    try {
-      const res = await fetch("/api/attempts/me", { cache: "no-store" });
-      const data = await res.json();
-      setRemaining(typeof data.remaining === "number" ? data.remaining : 0);
-      onChange?.();
-    } catch {
-      setRemaining(0);
-    }
-  }, [signedIn, onChange]);
-
-  useEffect(() => { refresh(); }, [refresh]);
+  // After a buy tx is sent, the on-chain balance takes a block or two to
+  // settle. One delayed re-pull covers the common case.
   useEffect(() => {
     if (!txHash) return;
-    const t = window.setTimeout(refresh, 5000);
+    const t = window.setTimeout(refreshAttempts, 5000);
     return () => window.clearTimeout(t);
-  }, [txHash, refresh]);
+  }, [txHash, refreshAttempts]);
 
   const buy = useCallback(() => {
     const value = parseEther("0.01") * BigInt(packs);
@@ -57,12 +43,18 @@ export function AttemptsPanel({
 
   const poolEth = pool ? formatEther((pool as readonly bigint[])[0]) : "0";
 
+  const remainingText = !signedIn
+    ? "—"
+    : !loaded
+      ? "…"
+      : String(remaining);
+
   return (
     <div className="panel">
       <div className="panel-row">
         <div className="stat">
           <span>Attempts</span>
-          <b>{remaining ?? (signedIn ? "…" : "—")}</b>
+          <b>{remainingText}</b>
         </div>
         <div className="stat">
           <span>Week pool</span>

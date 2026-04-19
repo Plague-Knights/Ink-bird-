@@ -11,36 +11,36 @@ export async function POST() {
   }
   const address = session.address.toLowerCase() as `0x${string}`;
 
-  // Check on-chain attempt balance against off-chain consumption.
-  let bought = 0n;
-  try {
-    bought = (await publicClient.readContract({
+  // Three independent reads — fire in parallel. Saves ~2 RPC roundtrips
+  // vs. the previous sequential await chain.
+  const [boughtResult, consumedResult, weekIdResult] = await Promise.allSettled([
+    publicClient.readContract({
       address: activeContracts.arcade,
       abi: InkSquidArcadeAbi,
       functionName: "attemptsBought",
       args: [address],
-    })) as bigint;
-  } catch {
+    }) as Promise<bigint>,
+    prisma.attempt.count({ where: { address } }),
+    publicClient.readContract({
+      address: activeContracts.arcade,
+      abi: InkSquidArcadeAbi,
+      functionName: "currentWeekId",
+    }) as Promise<bigint>,
+  ]);
+
+  if (boughtResult.status === "rejected") {
     return NextResponse.json({ error: "Unable to read attempt balance" }, { status: 502 });
   }
-
-  const consumed = await prisma.attempt.count({ where: { address } });
-  if (consumed >= Number(bought)) {
-    return NextResponse.json({ error: "No attempts remaining" }, { status: 402 });
+  if (consumedResult.status === "rejected") {
+    return NextResponse.json({ error: "DB read failed" }, { status: 500 });
   }
 
-  // Derive current week from chain time.
-  let weekId = 0;
-  try {
-    weekId = Number(
-      (await publicClient.readContract({
-        address: activeContracts.arcade,
-        abi: InkSquidArcadeAbi,
-        functionName: "currentWeekId",
-      })) as bigint,
-    );
-  } catch {
-    // keep 0 as a fallback
+  const bought = boughtResult.value;
+  const consumed = consumedResult.value;
+  const weekId = weekIdResult.status === "fulfilled" ? Number(weekIdResult.value) : 0;
+
+  if (consumed >= Number(bought)) {
+    return NextResponse.json({ error: "No attempts remaining" }, { status: 402 });
   }
 
   // Server-generated 32-bit seed. Fits in a single Mulberry32 state word.
