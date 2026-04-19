@@ -7,6 +7,7 @@ import { useState } from "react";
 import { WagmiProvider } from "wagmi";
 
 import { wagmiConfig } from "@/config/wagmi";
+import { ReferralCapture } from "@/components/ReferralCapture";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
@@ -21,6 +22,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             borderRadius: "large",
           })}
         >
+          <ReferralCapture />
           {children}
         </RainbowKitProvider>
       </QueryClientProvider>

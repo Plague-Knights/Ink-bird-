@@ -11,6 +11,12 @@
 export const PLAYER_SHARE_BPS = 7500; // 75% of pool goes to players; rest to treasury
 export const BPS_DENOM = 10_000;
 
+// Off-chain referral cut: when a buyer was referred, this slice of their
+// weekly pack spend is credited to the referrer as an extra merkle leaf.
+// Comes out of the player share (same 75% pot that funds placements), so
+// sum(placements) + sum(referrals) still fits under the on-chain cap.
+export const REFERRAL_BPS = 500; // 5%
+
 // Share of the PLAYER pool (not total pool) per rank, in basis points of
 // PLAYER_SHARE_BPS. Must sum to 10000.
 export const PAYOUT_CURVE_BPS: readonly number[] = [
@@ -31,15 +37,22 @@ if (PAYOUT_CURVE_BPS.reduce((a, b) => a + b, 0) !== BPS_DENOM) {
   throw new Error("payout curve must sum to 10000 bps");
 }
 
-/// Given the full weekly pool in wei, returns per-rank payouts matching
-/// PAYOUT_CURVE_BPS. Rank is 1-indexed in the returned array's implicit order.
-/// Any rounding dust lands on rank 1 so the sum always matches playerShare.
-export function computePayouts(poolWei: bigint): bigint[] {
-  const playerShare = (poolWei * BigInt(PLAYER_SHARE_BPS)) / BigInt(BPS_DENOM);
+/// Distributes an arbitrary wei budget across PAYOUT_CURVE_BPS. Rounding
+/// dust lands on rank 1 so the returned array always sums to `budget`.
+export function distributeCurve(budget: bigint): bigint[] {
+  if (budget <= 0n) return PAYOUT_CURVE_BPS.map(() => 0n);
   const payouts = PAYOUT_CURVE_BPS.map(
-    (bps) => (playerShare * BigInt(bps)) / BigInt(BPS_DENOM),
+    (bps) => (budget * BigInt(bps)) / BigInt(BPS_DENOM),
   );
   const distributed = payouts.reduce((a, b) => a + b, 0n);
-  payouts[0] += playerShare - distributed;
+  payouts[0] += budget - distributed;
   return payouts;
+}
+
+/// Given the full weekly pool in wei, returns per-rank payouts matching
+/// PAYOUT_CURVE_BPS. Rank is 1-indexed in the returned array's implicit order.
+/// Equivalent to distributing the 75% player share across the curve.
+export function computePayouts(poolWei: bigint): bigint[] {
+  const playerShare = (poolWei * BigInt(PLAYER_SHARE_BPS)) / BigInt(BPS_DENOM);
+  return distributeCurve(playerShare);
 }

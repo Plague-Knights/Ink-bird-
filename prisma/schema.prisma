@@ -50,3 +50,16 @@ model ClaimProof {
   @@unique([weekId, address])
   @@index([address])
 }
+
+// Off-chain referral binding. Written on SIWE sign-in when the session
+// carries a pendingReferrer captured from a `?ref=0x…` landing URL.
+// One-time lock: `referred` is unique, so the first referrer wins
+// forever and later visits with a different ref are ignored.
+model Referral {
+  id            String   @id @default(cuid())
+  referrer      String   // lowercased 0x… wallet
+  referred      String   @unique  // lowercased 0x… wallet
+  createdAt     DateTime @default(now())
+
+  @@index([referrer])
+}

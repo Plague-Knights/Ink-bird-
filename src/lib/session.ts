@@ -6,6 +6,7 @@ export type SessionData = {
   address?: `0x${string}`;
   chainId?: number;
   issuedAt?: number;
+  pendingReferrer?: `0x${string}`;
 };
 
 const secret = process.env.SESSION_SECRET;

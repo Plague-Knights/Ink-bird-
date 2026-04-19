@@ -3,6 +3,7 @@ import { parseSiweMessage } from "viem/siwe";
 
 import { publicClient } from "@/lib/chain";
 import { getSession } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
 
 export async function POST(req: Request) {
   try {
@@ -41,7 +42,24 @@ export async function POST(req: Request) {
     session.chainId = parsed.chainId;
     session.issuedAt = Date.now();
     session.nonce = undefined;
+
+    const pendingRef = session.pendingReferrer;
+    session.pendingReferrer = undefined;
     await session.save();
+
+    if (pendingRef && pendingRef.toLowerCase() !== parsed.address.toLowerCase()) {
+      // One-time lock on `referred`; the unique constraint makes concurrent
+      // binds safe. Swallow conflicts so a second sign-in with a different
+      // ref URL is a no-op instead of a 500.
+      await prisma.referral
+        .create({
+          data: {
+            referred: parsed.address.toLowerCase(),
+            referrer: pendingRef.toLowerCase(),
+          },
+        })
+        .catch(() => {});
+    }
 
     return NextResponse.json({ address: session.address });
   } catch (e) {

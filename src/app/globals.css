@@ -419,6 +419,28 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   gap: 10px;
 }
 
+.ref-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ref-link {
+  flex: 1;
+  min-width: 0;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: rgba(4, 20, 44, 0.7);
+  border: 1px solid var(--card-stroke);
+  border-radius: 10px;
+  padding: 9px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .packs {
   display: flex;
   align-items: center;

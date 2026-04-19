@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { publicClient, activeContracts } from "@/lib/chain";
 import { InkSquidArcadeAbi } from "@/config/abis/InkSquidArcade";
 import { buildTree, type Row } from "@/lib/merkle";
-import { computePayouts, PLAYER_SHARE_BPS } from "@/lib/payouts";
+import { distributeCurve, PLAYER_SHARE_BPS, REFERRAL_BPS, BPS_DENOM } from "@/lib/payouts";
 
 function safeEq(a: string, b: string): boolean {
   const ab = Buffer.from(a);
@@ -69,6 +69,53 @@ export async function POST(req: Request) {
   })) as readonly [bigint, bigint, bigint, bigint, `0x${string}`];
   const pool = weekTuple[0];
 
+  // --- Referral payouts ----------------------------------------------------
+  // Scan AttemptsBought(player, value, attempts, weekId) logs for the week
+  // to get authoritative per-player wei spend (the on-chain attemptsBought
+  // mapping is cumulative, not per-week). Then credit 5% of each referred
+  // player's spend to their pinned referrer.
+  //
+  // INK_SQUID_DEPLOY_BLOCK lets us skip scanning pre-deploy history on RPCs
+  // that cap block range. Defaults to 0n — fine while the chain is young.
+  const fromBlockEnv = process.env.INK_SQUID_DEPLOY_BLOCK;
+  const fromBlock = fromBlockEnv ? BigInt(fromBlockEnv) : 0n;
+
+  const logs = await publicClient.getContractEvents({
+    address: activeContracts.arcade,
+    abi: InkSquidArcadeAbi,
+    eventName: "AttemptsBought",
+    args: { weekId: BigInt(weekId) },
+    fromBlock,
+    toBlock: "latest",
+  });
+
+  const spend = new Map<string, bigint>();
+  for (const log of logs) {
+    const { player, value } = log.args as { player?: `0x${string}`; value?: bigint };
+    if (!player || value === undefined) continue;
+    const key = player.toLowerCase();
+    spend.set(key, (spend.get(key) ?? 0n) + value);
+  }
+
+  const referred = Array.from(spend.keys());
+  const referralRows =
+    referred.length === 0
+      ? []
+      : await prisma.referral.findMany({ where: { referred: { in: referred } } });
+  const refMap = new Map<string, string>();
+  for (const r of referralRows) refMap.set(r.referred, r.referrer);
+
+  const refPayouts = new Map<string, bigint>();
+  for (const [player, wei] of spend) {
+    const referrer = refMap.get(player);
+    if (!referrer) continue;
+    const cut = (wei * BigInt(REFERRAL_BPS)) / BigInt(BPS_DENOM);
+    if (cut === 0n) continue;
+    refPayouts.set(referrer, (refPayouts.get(referrer) ?? 0n) + cut);
+  }
+  const referralTotal = Array.from(refPayouts.values()).reduce((a, b) => a + b, 0n);
+
+  // --- Placement payouts ---------------------------------------------------
   // Tiebreaker: earliest submission among an address's valid attempts wins
   // rank, then address alphabetically. Eliminates Postgres-dependent order.
   const ranked = await prisma.$queryRaw<
@@ -90,22 +137,43 @@ export async function POST(req: Request) {
     LIMIT 20
   `;
 
-  const payouts = computePayouts(pool);
-  const rows: Row[] = [];
+  const playerShare = (pool * BigInt(PLAYER_SHARE_BPS)) / BigInt(BPS_DENOM);
+  if (referralTotal > playerShare) {
+    return NextResponse.json(
+      {
+        error: "Referral payouts exceed player share",
+        playerShare: playerShare.toString(),
+        referralTotal: referralTotal.toString(),
+      },
+      { status: 500 },
+    );
+  }
+  const placementBudget = playerShare - referralTotal;
+  const payouts = distributeCurve(placementBudget);
+
+  // Merge placement + referral into a single amount per address — the
+  // contract's claimedByWeek mapping keys by (weekId, player), so one
+  // wallet must appear at most once in the merkle tree.
+  const totals = new Map<`0x${string}`, bigint>();
   for (let i = 0; i < ranked.length && i < payouts.length; i++) {
     if (payouts[i] === 0n) continue;
-    rows.push({
-      address: ranked[i].address.toLowerCase() as `0x${string}`,
-      amount: payouts[i],
-    });
+    const addr = ranked[i].address.toLowerCase() as `0x${string}`;
+    totals.set(addr, (totals.get(addr) ?? 0n) + payouts[i]);
   }
+  for (const [referrer, amt] of refPayouts) {
+    const addr = referrer.toLowerCase() as `0x${string}`;
+    totals.set(addr, (totals.get(addr) ?? 0n) + amt);
+  }
+
+  const rows: Row[] = Array.from(totals.entries())
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([address, amount]) => ({ address, amount }));
 
   const tree = buildTree(rows);
   const totalPayout = rows.reduce((acc, r) => acc + r.amount, 0n);
-  const cap = (pool * BigInt(PLAYER_SHARE_BPS)) / 10000n;
-  if (totalPayout > cap) {
+  if (totalPayout > playerShare) {
     return NextResponse.json(
-      { error: "Total payout exceeds player-share cap", totalPayout: totalPayout.toString(), cap: cap.toString() },
+      { error: "Total payout exceeds player-share cap", totalPayout: totalPayout.toString(), cap: playerShare.toString() },
       { status: 500 },
     );
   }
@@ -134,6 +202,8 @@ export async function POST(req: Request) {
     root: tree.root,
     totalPayout: totalPayout.toString(),
     winners: rows.length,
+    referralPayout: referralTotal.toString(),
+    referralRecipients: refPayouts.size,
     txHash: null,
   });
 }

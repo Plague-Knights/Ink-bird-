@@ -5,6 +5,7 @@ import { Game } from "@/components/Game";
 import { Leaderboard } from "@/components/Leaderboard";
 import { ConnectWallet } from "@/components/ConnectWallet";
 import { AttemptsPanel } from "@/components/AttemptsPanel";
+import { ReferralPanel } from "@/components/ReferralPanel";
 import { ClaimPanel } from "@/components/ClaimPanel";
 import { useAttempts, useAuth } from "@/lib/useSession";
 
@@ -59,6 +60,7 @@ export default function Home() {
           <Game canStart={canStart} onBeforeStart={onBeforeStart} onGameOver={onGameOver} />
           <AttemptsPanel />
           <ClaimPanel signedIn={signedIn} />
+          <ReferralPanel />
         </div>
         <Leaderboard refreshKey={refreshKey} />
       </div>
