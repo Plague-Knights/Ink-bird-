@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { isAddress, getAddress } from "viem";
 import { getSession } from "@/lib/session";
 
-// POST /api/referral/capture — body { referrer: "0x…" }
+// POST /api/referral/capture. Body: { referrer: "0x..." }
 // Pins the referrer into the session so it can be bound to the wallet
 // once the user completes SIWE. No-ops if the user is already signed
 // in (the referrer column is locked at bind time, not here).

@@ -76,7 +76,7 @@ export async function POST(req: Request) {
   // player's spend to their pinned referrer.
   //
   // INK_SQUID_DEPLOY_BLOCK lets us skip scanning pre-deploy history on RPCs
-  // that cap block range. Defaults to 0n — fine while the chain is young.
+  // that cap block range. Defaults to 0n, fine while the chain is young.
   const fromBlockEnv = process.env.INK_SQUID_DEPLOY_BLOCK;
   const fromBlock = fromBlockEnv ? BigInt(fromBlockEnv) : 0n;
 
@@ -151,7 +151,7 @@ export async function POST(req: Request) {
   const placementBudget = playerShare - referralTotal;
   const payouts = distributeCurve(placementBudget);
 
-  // Merge placement + referral into a single amount per address — the
+  // Merge placement + referral into a single amount per address. The
   // contract's claimedByWeek mapping keys by (weekId, player), so one
   // wallet must appear at most once in the merkle tree.
   const totals = new Map<`0x${string}`, bigint>();

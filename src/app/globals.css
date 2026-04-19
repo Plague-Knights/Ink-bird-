@@ -423,10 +423,13 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  min-width: 0;
 }
 
 .ref-link {
-  flex: 1;
+  display: block;
+  flex: 1 1 0;
   min-width: 0;
   font-family: inherit;
   font-size: 12px;
@@ -439,6 +442,10 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ref-row .icon-btn {
+  flex: 0 0 auto;
 }
 
 .packs {

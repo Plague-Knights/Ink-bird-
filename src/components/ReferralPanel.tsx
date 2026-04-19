@@ -20,7 +20,7 @@ export function ReferralPanel() {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Clipboard can be blocked in iframes / insecure contexts — user can
+      // Clipboard can be blocked in iframes / insecure contexts; user can
       // still select the text manually.
     }
   }, [link]);
@@ -31,7 +31,7 @@ export function ReferralPanel() {
 
   return (
     <div className="panel">
-      <h3 className="panel-title">Referral link — earn {pct}%</h3>
+      <h3 className="panel-title">Referral link - earn {pct}%</h3>
       <div className="ref-row">
         <code className="ref-link" title={link}>{link}</code>
         <button className="icon-btn" onClick={copy} type="button">

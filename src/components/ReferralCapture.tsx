@@ -17,7 +17,7 @@ export function ReferralCapture() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ referrer: ref }),
     }).catch(() => {
-      // Best-effort — a failed capture just means no credit. Don't surface.
+      // Best-effort. A failed capture just means no credit; don't surface.
     });
 
     url.searchParams.delete("ref");
