@@ -442,7 +442,10 @@ export function Game({ canStart, onBeforeStart, onGameOver }: GameProps) {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("inkbird.best");
+      // "best" is the best PRIZE-mode score only. The old "inkbird.best" key
+      // was polluted by practice runs; renaming it orphans that data and
+      // starts fresh against the new, practice-excluded semantics.
+      const raw = localStorage.getItem("inkbird.best.prize");
       const parsed = parseInt(raw ?? "0", 10);
       if (Number.isFinite(parsed)) setBest(parsed);
     } catch {}
@@ -490,13 +493,15 @@ export function Game({ canStart, onBeforeStart, onGameOver }: GameProps) {
                 }
               }
               const finalScore = sim.score;
-              setBest((b) => {
-                if (finalScore > b) {
-                  try { localStorage.setItem("inkbird.best", String(finalScore)); } catch {}
-                  return finalScore;
-                }
-                return b;
-              });
+              if (!practiceRef.current) {
+                setBest((b) => {
+                  if (finalScore > b) {
+                    try { localStorage.setItem("inkbird.best.prize", String(finalScore)); } catch {}
+                    return finalScore;
+                  }
+                  return b;
+                });
+              }
               setMedal(medalFor(finalScore));
               const aId = attemptIdRef.current;
               const seed = seedRef.current;
