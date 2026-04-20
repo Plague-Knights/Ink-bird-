@@ -1,0 +1,9 @@
+# Ink Squid — security contact
+# https://squid.inkswap.io
+# Source: https://github.com/Plague-Knights/Ink-bird-
+
+Contact: mailto:crowderw16@gmail.com
+Expires: 2027-04-19T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://squid.inkswap.io/.well-known/security.txt
+Policy: https://github.com/Plague-Knights/Ink-bird-/blob/main/README.md
