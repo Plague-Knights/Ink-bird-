@@ -12,29 +12,32 @@ type Props = {
   animating: boolean;
   onAnimDone: () => void;
   onMultiplierUpdate?: (bps: number) => void;
-  // User-selected launch angle in degrees, 20..80.
-  angleDeg: number;
+  angleDeg: number; // 20..80
 };
 
-// Portrait canvas to match Moonsheep's mobile-first layout. All gameplay
-// happens vertically: cannon at the lower-left, scene fills up toward the
-// sky, squid arcs upward into the flight area where blots + hazards live.
+// Portrait canvas matching the main flappy game aspect (480x640-ish).
+// The *world* is ~3000 units wide though — camera scrolls horizontally
+// to follow the squid, just like the flappy game scrolls pipes past
+// the bird.
 const W = 480;
 const H = 760;
 
-// Platform positions — cannon sits on the left rock, spectator (a small
-// sibling squid friend) sits on the right rock. Kept on-screen at all
-// times so the frame reads as a character sketch, not an empty level.
-const CANNON_X = 100;
-const PLATFORM_Y = H - 130;
-const SPECTATOR_X = W - 80;
+const GROUND_H = 96;
+const CANNON_WORLD_X = 100;
+const GROUND_Y = H - GROUND_H;
+const PLATFORM_Y = GROUND_Y - 10;
 
-// Flight area top (where the "moon" hangs) and bottom (cannon mouth).
-// Arc traverses from bottom to top depending on angle.
-const FLIGHT_TOP_Y = 110;
+const GRAVITY = 820;       // world units per second^2
+const LAUNCH_POWER = 820;  // initial speed in world units per second
+const FLIGHT_MAX_SECONDS = 10;
 
-const FLIGHT_SECONDS_PER_BLOT = 0.3;
+const SPAN_TRAVEL_PER_BLOT = 180;
+const SPAN_TAIL_WORLD = 260;
+
 const LINGER_SECONDS = 1.0;
+
+type Weed = { layer: 0 | 1; x: number; w: number; h: number };
+type Bubble = { x: number; y: number; r: number; tw: number; vy: number };
 
 function blotCount(events: readonly CannonEvent[] | null): number {
   if (!events) return 0;
@@ -47,66 +50,125 @@ function hasHazard(events: readonly CannonEvent[] | null): boolean {
   return events?.some((e) => e.kind === "hazard") ?? false;
 }
 
-// Given a launch angle in degrees (measured from horizontal), produce an
-// arc ending roughly up and to the right of the cannon. Steeper angle
-// pushes the endpoint higher but less to the right. Flat angle pushes
-// endpoint farther to the right.
-function arcEnd(angleDeg: number): { x: number; y: number; peakH: number } {
+// Physics helpers ------------------------------------------------------
+
+type Traj = {
+  durationSec: number;
+  vx: number;
+  vy0: number;  // velocity at launch, negative = up (canvas y down)
+  startX: number;
+  startY: number;
+  // Full max reach — we scale `--power` to make the squid travel roughly
+  // SPAN_TRAVEL_PER_BLOT per collectible so short runs don't look tiny
+  // and long runs don't overshoot.
+  peakY: number;
+  landingX: number;
+};
+
+function computeTrajectory(angleDeg: number, events: readonly CannonEvent[] | null): Traj {
+  const blots = blotCount(events);
+  const travel = Math.max(260, blots * SPAN_TRAVEL_PER_BLOT + SPAN_TAIL_WORLD);
   const a = (angleDeg * Math.PI) / 180;
-  // Max reach scales with sin(2a) for projectile; we keep a fixed
-  // "power" and let angle redistribute between horizontal & vertical
-  // reach so the trajectory always fits the canvas.
-  const powerX = 300; // px
-  const powerY = 520; // px
-  const ex = CANNON_X + Math.cos(a) * powerX;
-  const ey = PLATFORM_Y - 20 - Math.sin(a) * powerY;
-  const peakH = Math.max(60, Math.sin(a) * powerY * 0.6 + 40);
-  return { x: Math.min(W - 40, ex), y: Math.max(FLIGHT_TOP_Y, ey), peakH };
+  // Solve for initial speed that reaches `travel` horizontally at this
+  // angle. Range = v² * sin(2a) / g → v = sqrt(range * g / sin(2a)).
+  const sin2a = Math.max(0.1, Math.sin(2 * a));
+  const vMag = Math.min(2200, Math.sqrt((travel * GRAVITY) / sin2a));
+  const vx = Math.cos(a) * vMag;
+  const vy0 = -Math.sin(a) * vMag;
+  const duration = Math.min(FLIGHT_MAX_SECONDS, (-2 * vy0) / GRAVITY);
+  // Peak (for camera clamping)
+  const peakT = -vy0 / GRAVITY;
+  const peakY = PLATFORM_Y + vy0 * peakT + 0.5 * GRAVITY * peakT * peakT;
+  const landingX = CANNON_WORLD_X + vx * duration;
+  return {
+    durationSec: duration,
+    vx,
+    vy0,
+    startX: CANNON_WORLD_X,
+    startY: PLATFORM_Y,
+    peakY,
+    landingX,
+  };
 }
 
-function arcPoint(t: number, angleDeg: number): [number, number] {
-  const { x: ex, y: ey, peakH } = arcEnd(angleDeg);
-  const startX = CANNON_X;
-  const startY = PLATFORM_Y - 20;
-  const x = startX + t * (ex - startX);
-  const parabola = 4 * peakH * t * (1 - t);
-  const linearY = startY + t * (ey - startY);
-  return [x, linearY - parabola];
+function posAtT(traj: Traj, t: number): [number, number] {
+  // t in seconds since launch
+  const x = traj.startX + traj.vx * t;
+  const y = traj.startY + traj.vy0 * t + 0.5 * GRAVITY * t * t;
+  return [x, y];
 }
+
+// Cosmetic ambient content ---------------------------------------------
+
+function seedWeeds(): Weed[] {
+  const out: Weed[] = [];
+  // Weeds spread across the full world width so scrolling reveals more
+  // of them. `x` is world coordinate.
+  for (let i = 0; i < 18; i++) {
+    out.push({ layer: 0, x: i * 180 + Math.random() * 80, w: 140 + Math.random() * 60, h: 60 + Math.random() * 50 });
+  }
+  for (let i = 0; i < 14; i++) {
+    out.push({ layer: 1, x: i * 230 + Math.random() * 80, w: 180 + Math.random() * 60, h: 90 + Math.random() * 60 });
+  }
+  return out;
+}
+
+function seedBubbles(): Bubble[] {
+  const out: Bubble[] = [];
+  for (let i = 0; i < 36; i++) {
+    out.push({
+      x: Math.random() * 3600,
+      y: Math.random() * (H - GROUND_H),
+      r: 1.2 + Math.random() * 2.6,
+      tw: Math.random() * Math.PI * 2,
+      vy: 0.25 + Math.random() * 0.6,
+    });
+  }
+  return out;
+}
+
+// Main component -------------------------------------------------------
 
 export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate, angleDeg }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const startRef = useRef<number>(0);
   const doneRef = useRef(false);
-  const bubblesRef = useRef<Array<{ x: number; y: number; vy: number; r: number; life: number }>>([]);
-  const starsRef = useRef<Array<{ x: number; y: number; r: number; tw: number }> | null>(null);
   const hitSetRef = useRef<Set<number>>(new Set());
   const accumulatedBpsRef = useRef<number>(0);
-  const inkSplashesRef = useRef<Array<{ x: number; y: number; age: number; color: string }>>([]);
+  const splashesRef = useRef<Array<{ x: number; y: number; age: number; color: string }>>([]);
+  const weedsRef = useRef<Weed[] | null>(null);
+  const bubblesRef = useRef<Bubble[] | null>(null);
+  const cameraXRef = useRef<number>(0);
+  const frameRef = useRef<number>(0);
+
+  const traj = useMemo(() => computeTrajectory(angleDeg, events), [angleDeg, events]);
 
   const blotPlan = useMemo(() => {
-    if (!events) return [] as Array<{ t: number; value: number }>;
+    if (!events) return [] as Array<{ t: number; worldX: number; worldY: number; value: number }>;
     const blots = events.filter((e) => e.kind === "blot") as Array<{ kind: "blot"; value: number }>;
     const total = blots.length;
-    return blots.map((b, i) => ({
-      t: (i + 1) / (total + 1),
-      value: b.value,
-    }));
-  }, [events]);
+    return blots.map((b, i) => {
+      const t = ((i + 1) / (total + 1)) * traj.durationSec;
+      const [x, y] = posAtT(traj, t);
+      return { t, worldX: x, worldY: y, value: b.value };
+    });
+  }, [events, traj]);
 
-  const flightSeconds = useMemo(() => {
-    if (!events) return 1.2;
-    return Math.max(1.4, blotCount(events) * FLIGHT_SECONDS_PER_BLOT + 0.8);
-  }, [events]);
+  const hazardPos = useMemo(() => {
+    if (!hasHazard(events)) return null;
+    const [x, y] = posAtT(traj, traj.durationSec);
+    // Nudge hazard slightly off the ground so the squid collides mid-air
+    return { x, y: Math.min(y, GROUND_Y - 20) };
+  }, [events, traj]);
 
-  // Reset per-run state every time a new animation starts.
+  // Reset per-run state.
   useEffect(() => {
     if (animating) {
       startRef.current = 0;
       doneRef.current = false;
       hitSetRef.current = new Set();
       accumulatedBpsRef.current = 0;
-      inkSplashesRef.current = [];
+      splashesRef.current = [];
       if (onMultiplierUpdate) onMultiplierUpdate(0);
     }
   }, [animating, onMultiplierUpdate]);
@@ -117,204 +179,257 @@ export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Seed starfield once. Stationary, twinkles in place.
-    if (!starsRef.current) {
-      const arr: Array<{ x: number; y: number; r: number; tw: number }> = [];
-      for (let i = 0; i < 60; i++) {
-        arr.push({
-          x: Math.random() * W,
-          y: Math.random() * (FLIGHT_TOP_Y + 180),
-          r: 0.6 + Math.random() * 1.4,
-          tw: Math.random() * Math.PI * 2,
-        });
-      }
-      starsRef.current = arr;
-    }
+    if (!weedsRef.current) weedsRef.current = seedWeeds();
+    if (!bubblesRef.current) bubblesRef.current = seedBubbles();
 
     let raf = 0;
     const draw = (now: number) => {
+      frameRef.current++;
+      const frame = frameRef.current;
       ctx.clearRect(0, 0, W, H);
 
-      // --- Sky / deep space gradient ---
-      const sky = ctx.createLinearGradient(0, 0, 0, H);
-      sky.addColorStop(0, "#120a2c");
-      sky.addColorStop(0.25, "#1c1344");
-      sky.addColorStop(0.55, "#1b2f64");
-      sky.addColorStop(0.8, "#0d3a6a");
-      sky.addColorStop(1, "#010716");
+      // ---------- Ocean sky gradient (same palette as flappy game) ----------
+      const sky = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+      sky.addColorStop(0, "#7ad3e0");
+      sky.addColorStop(0.25, "#2a9ac2");
+      sky.addColorStop(0.6, "#0e4a7c");
+      sky.addColorStop(1, "#041a3a");
       ctx.fillStyle = sky;
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, W, GROUND_Y);
 
-      // --- Starfield (twinkling) ---
-      for (const s of starsRef.current!) {
-        s.tw += 0.03;
-        const a = 0.4 + Math.sin(s.tw) * 0.4;
-        ctx.fillStyle = `rgba(220, 230, 255, ${a.toFixed(3)})`;
+      // Surface shimmer
+      const shimmer = ctx.createLinearGradient(0, 0, 0, 40);
+      shimmer.addColorStop(0, "rgba(255,255,255,0.35)");
+      shimmer.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = shimmer;
+      ctx.fillRect(0, 0, W, 40);
+
+      // God-ray shafts (moving with camera for parallax)
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (let i = 0; i < 6; i++) {
+        const baseX = ((i * 160 + frame * 0.4 - cameraXRef.current * 0.15) % (W + 280)) - 120;
+        ctx.fillStyle = "rgba(200, 230, 255, 0.05)";
         ctx.beginPath();
-        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.moveTo(baseX, 0);
+        ctx.lineTo(baseX + 50, 0);
+        ctx.lineTo(baseX + 210, GROUND_Y);
+        ctx.lineTo(baseX + 170, GROUND_Y);
+        ctx.closePath();
         ctx.fill();
       }
+      ctx.restore();
 
-      // --- Floating "moon" / target orb in the upper-right ---
-      drawMoon(ctx, W - 120, 130, 60, now);
-
-      // --- Distant mountain silhouettes (mid-ground) ---
-      ctx.fillStyle = "#1a0e42";
-      ctx.beginPath();
-      ctx.moveTo(0, H * 0.6);
-      for (let x = 0; x <= W; x += 10) {
-        const y = H * 0.6 - Math.sin(x / 70) * 22 - Math.sin(x / 30) * 8;
-        ctx.lineTo(x, y);
-      }
-      ctx.lineTo(W, H); ctx.lineTo(0, H);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = "#2a1158";
-      ctx.beginPath();
-      ctx.moveTo(0, H * 0.7);
-      for (let x = 0; x <= W; x += 10) {
-        const y = H * 0.7 - Math.sin((x + 20) / 50) * 18 - 6;
-        ctx.lineTo(x, y);
-      }
-      ctx.lineTo(W, H); ctx.lineTo(0, H);
-      ctx.closePath();
-      ctx.fill();
-
-      // --- Drifting ambient bubbles through the whole scene ---
-      if (Math.random() < 0.04) {
-        bubblesRef.current.push({
-          x: Math.random() * W,
-          y: H + 4,
-          vy: -0.25 - Math.random() * 0.3,
-          r: 1 + Math.random() * 2.5,
-          life: 0,
-        });
-      }
-      for (let i = bubblesRef.current.length - 1; i >= 0; i--) {
-        const b = bubblesRef.current[i];
-        b.y += b.vy;
-        b.life += 1 / 60;
-        if (b.y < 60 || b.life > 18) bubblesRef.current.splice(i, 1);
-      }
-      ctx.fillStyle = "rgba(200,230,255,0.5)";
-      for (const b of bubblesRef.current) {
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // --- Left platform with cannon + squid ---
-      drawPlatform(ctx, CANNON_X, PLATFORM_Y + 30, 110, "#3a1a72");
-      drawCannon(ctx, CANNON_X, PLATFORM_Y, angleDeg);
-
-      // --- Right platform with spectator ---
-      drawPlatform(ctx, SPECTATOR_X, PLATFORM_Y + 30, 80, "#2a1558");
-      drawSpectator(ctx, SPECTATOR_X, PLATFORM_Y - 20, now);
-
-      // --- Trajectory preview when idle (dotted path showing where squid will go) ---
-      if (!events || (!animating && !hasHazard(events))) {
-        drawPreviewArc(ctx, angleDeg, now);
-      }
-
-      // --- Blots on the arc (only shown while / after a run) ---
-      if (events) {
-        const total = blotCount(events);
-        let bi = 0;
-        for (const e of events) {
-          if (e.kind !== "blot") continue;
-          bi++;
-          if (hitSetRef.current.has(bi - 1) && animating) continue;
-          const t = bi / (total + 1);
-          const [bx, by] = arcPoint(t, angleDeg);
-          const size = 5 + Math.min(10, e.value / 400);
-          const color = e.value > 3000 ? "#ffc24a" : e.value > 1000 ? "#c986ff" : "#5fd8ff";
-          ctx.fillStyle = color + "55";
-          ctx.beginPath();
-          ctx.arc(bx, by, size + 3 + Math.sin(now / 200 + bi) * 2, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.arc(bx, by, size, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        // Hazard at arc end
-        if (hasHazard(events)) {
-          const [hx, hy] = arcPoint(1, angleDeg);
-          drawAnglerfish(ctx, hx, hy, now);
-        }
-      }
-
-      // --- Squid position: either in-cannon (idle) or mid-flight ---
-      let sx = CANNON_X + Math.cos((angleDeg * Math.PI) / 180) * 30;
-      let sy = PLATFORM_Y - 30 - Math.sin((angleDeg * Math.PI) / 180) * 30;
+      // ---------- Camera target ----------
+      // Current squid position for camera follow. Squid coords are world space.
+      let sx = traj.startX;
+      let sy = traj.startY - 10;
       let rot = -((angleDeg * Math.PI) / 180) + Math.PI / 2;
-      let squidSpeed = 0;
-
+      let speed = 0;
       if (events && animating) {
         if (startRef.current === 0) startRef.current = now;
         const elapsed = (now - startRef.current) / 1000;
-        const t = Math.min(1, elapsed / flightSeconds);
-        const [x, y] = arcPoint(t, angleDeg);
-        sx = x; sy = y;
-        const dt = 0.01;
-        const [x2, y2] = arcPoint(Math.min(1, t + dt), angleDeg);
+        const t = Math.min(traj.durationSec, elapsed);
+        const [x, y] = posAtT(traj, t);
+        sx = x;
+        sy = Math.min(y, GROUND_Y - 4);
+        const dtEps = 0.016;
+        const [x2, y2] = posAtT(traj, Math.min(traj.durationSec, t + dtEps));
         rot = Math.atan2(y2 - y, Math.max(1, x2 - x));
-        squidSpeed = Math.hypot(x2 - x, y2 - y);
+        speed = Math.hypot(x2 - x, y2 - y) / dtEps;
 
+        // Collect blots at their scheduled time
         for (let i = 0; i < blotPlan.length; i++) {
           if (hitSetRef.current.has(i)) continue;
-          if (t >= blotPlan[i].t) {
+          if (elapsed >= blotPlan[i].t) {
             hitSetRef.current.add(i);
             accumulatedBpsRef.current += blotPlan[i].value;
             if (onMultiplierUpdate) onMultiplierUpdate(accumulatedBpsRef.current);
-            const [hx, hy] = arcPoint(blotPlan[i].t, angleDeg);
-            inkSplashesRef.current.push({
-              x: hx, y: hy, age: 0,
+            splashesRef.current.push({
+              x: blotPlan[i].worldX,
+              y: blotPlan[i].worldY,
+              age: 0,
               color: blotPlan[i].value > 3000 ? "#ffc24a" : blotPlan[i].value > 1000 ? "#c986ff" : "#5fd8ff",
             });
           }
         }
 
-        if (t >= 1 && elapsed >= flightSeconds + LINGER_SECONDS && !doneRef.current) {
+        if (elapsed >= traj.durationSec + LINGER_SECONDS && !doneRef.current) {
           doneRef.current = true;
           startRef.current = 0;
           onAnimDone();
         }
       } else if (events && !animating) {
-        const [x, y] = arcPoint(1, angleDeg);
-        sx = x; sy = y; rot = 0.6;
+        // Settled pose — squid at landing point
+        const [x, y] = posAtT(traj, traj.durationSec);
+        sx = x; sy = Math.min(y, GROUND_Y - 4); rot = 0.6;
       }
 
-      // --- Ink splashes (fade out) ---
-      for (let i = inkSplashesRef.current.length - 1; i >= 0; i--) {
-        const s = inkSplashesRef.current[i];
-        s.age += 1 / 60;
-        if (s.age > 0.7) inkSplashesRef.current.splice(i, 1);
+      // Smoothly slide camera to keep the squid in the left third of
+      // the viewport. When idle we sit over the cannon.
+      const targetCamX = animating || (events && !animating)
+        ? Math.max(0, sx - W * 0.3)
+        : 0;
+      cameraXRef.current += (targetCamX - cameraXRef.current) * 0.1;
+      const camX = cameraXRef.current;
+
+      // ---------- Ambient bubbles (world space) ----------
+      ctx.save();
+      ctx.translate(-camX, 0);
+      const bubbles = bubblesRef.current!;
+      for (const b of bubbles) {
+        b.y -= b.vy;
+        b.tw += 0.05;
+        if (b.y < -4) {
+          b.y = GROUND_Y + Math.random() * 20;
+          b.x = camX + Math.random() * (W + 200);
+        }
+        const a = 0.35 + Math.sin(b.tw) * 0.15;
+        ctx.strokeStyle = `rgba(220, 240, 255, ${a + 0.35})`;
+        ctx.lineWidth = 1;
+        ctx.fillStyle = `rgba(180, 220, 255, ${a * 0.35})`;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = `rgba(255,255,255,${a + 0.4})`;
+        ctx.beginPath();
+        ctx.arc(b.x - b.r * 0.4, b.y - b.r * 0.4, Math.max(0.6, b.r * 0.25), 0, Math.PI * 2);
+        ctx.fill();
       }
-      for (const s of inkSplashesRef.current) {
+      ctx.restore();
+
+      // ---------- Weeds (world space, parallax per layer) ----------
+      ctx.save();
+      const weeds = weedsRef.current!;
+      for (const h of weeds) {
+        const parallax = h.layer === 0 ? 0.5 : 0.85;
+        const screenX = h.x - camX * parallax;
+        // Cull if fully off-screen
+        if (screenX + h.w < -20 || screenX > W + 20) continue;
+        const isFar = h.layer === 0;
+        ctx.strokeStyle = isFar ? "rgba(25, 90, 80, 0.55)" : "rgba(10, 60, 45, 0.95)";
+        ctx.lineWidth = isFar ? 3 : 5;
+        ctx.lineCap = "round";
+        const blades = isFar ? 3 : 4;
+        for (let i = 0; i < blades; i++) {
+          const bx = screenX + (i + 0.5) * (h.w / blades);
+          const bladeH = h.h * 0.85;
+          ctx.beginPath();
+          ctx.moveTo(bx, GROUND_Y);
+          const segs = 5;
+          for (let s = 1; s <= segs; s++) {
+            const t = s / segs;
+            const wy = GROUND_Y - t * bladeH;
+            const wx = bx + Math.sin(frame * 0.04 + i * 0.9 + h.x * 0.02 + t * 2) * 7 * t;
+            ctx.lineTo(wx, wy);
+          }
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+
+      // ---------- Ground strip ----------
+      ctx.fillStyle = "#0d1f3a";
+      ctx.fillRect(0, GROUND_Y, W, GROUND_H);
+      // Sand/rock top line
+      ctx.fillStyle = "#8a6333";
+      ctx.fillRect(0, GROUND_Y, W, 8);
+      ctx.fillStyle = "#5f4220";
+      for (let x = -((camX * 0.9) % 32); x < W; x += 32) {
+        ctx.fillRect(x, GROUND_Y + 8, 16, 3);
+      }
+
+      // ---------- Blots along the trajectory ----------
+      if (events) {
+        for (let i = 0; i < blotPlan.length; i++) {
+          if (hitSetRef.current.has(i) && animating) continue;
+          const b = blotPlan[i];
+          const screenX = b.worldX - camX;
+          const screenY = b.worldY - 22 - Math.sin(frame * 0.1 + i) * 3;
+          if (screenX < -40 || screenX > W + 40) continue;
+          const size = 8 + Math.min(12, b.value / 400);
+          const color = b.value > 3000 ? "#ffc24a" : b.value > 1000 ? "#c986ff" : "#5fd8ff";
+          // Halo glow
+          const halo = ctx.createRadialGradient(screenX, screenY, 2, screenX, screenY, size * 2.4);
+          halo.addColorStop(0, color + "88");
+          halo.addColorStop(1, color + "00");
+          ctx.fillStyle = halo;
+          ctx.beginPath();
+          ctx.arc(screenX, screenY, size * 2.4, 0, Math.PI * 2);
+          ctx.fill();
+          // Droplet-shaped body (reuses the main game's droplet aesthetic)
+          ctx.save();
+          ctx.translate(screenX, screenY);
+          const body = ctx.createRadialGradient(-3, -4, 1, 0, 0, size);
+          body.addColorStop(0, color);
+          body.addColorStop(0.6, adjustColor(color, -40));
+          body.addColorStop(1, "#0a0224");
+          ctx.fillStyle = body;
+          ctx.beginPath();
+          ctx.moveTo(0, -size * 1.25);
+          ctx.bezierCurveTo(size * 1.05, -size * 0.2, size, size, 0, size);
+          ctx.bezierCurveTo(-size, size, -size * 1.05, -size * 0.2, 0, -size * 1.25);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255, 255, 255, 0.65)";
+          ctx.beginPath();
+          ctx.ellipse(-size * 0.3, -size * 0.3, size * 0.22, size * 0.38, -0.3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Hazard (anglerfish) at the end of the trajectory
+        if (hazardPos) {
+          const hx = hazardPos.x - camX;
+          const hy = hazardPos.y;
+          if (hx > -60 && hx < W + 60) drawAnglerfish(ctx, hx, hy, now);
+        }
+      }
+
+      // ---------- Splashes (world space) ----------
+      for (let i = splashesRef.current.length - 1; i >= 0; i--) {
+        const s = splashesRef.current[i];
+        s.age += 1 / 60;
+        if (s.age > 0.7) splashesRef.current.splice(i, 1);
+      }
+      ctx.save();
+      ctx.translate(-camX, 0);
+      for (const s of splashesRef.current) {
         const a = 1 - s.age / 0.7;
         ctx.fillStyle = s.color + Math.floor(a * 160).toString(16).padStart(2, "0");
         const r = 10 + s.age * 40;
         ctx.beginPath();
-        ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+        ctx.arc(s.x, s.y - 22, r, 0, Math.PI * 2);
         ctx.fill();
       }
+      ctx.restore();
 
-      // --- Squid body ---
+      // ---------- Cannon (world space, on the left platform) ----------
+      drawCannon(ctx, CANNON_WORLD_X - camX, PLATFORM_Y, angleDeg);
+
+      // ---------- Squid ----------
       drawSquid(ctx, {
-        x: sx,
+        x: sx - camX,
         y: sy,
         r: 12,
         rotRad: rot,
-        flapPhase: squidSpeed * 0.3,
-        frame: Math.floor(now / 16.67),
+        flapPhase: speed * 0.01,
+        frame,
       });
+
+      // ---------- Preview arc (idle state, shows where shot will go) ----------
+      if (events === null || (events && !animating && !hasHazard(events))) {
+        // Only show preview when idle OR on a successful run's rest pose
+      }
+      if (!events && !animating) {
+        drawPreviewArc(ctx, traj, now, camX);
+      }
 
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [events, animating, onAnimDone, onMultiplierUpdate, angleDeg, blotPlan, flightSeconds]);
+  }, [events, animating, onAnimDone, onMultiplierUpdate, angleDeg, blotPlan, hazardPos, traj]);
 
   return (
     <div className="dive-canvas-wrap">
@@ -325,55 +440,33 @@ export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate
 
 // ----- helpers ---------------------------------------------------------
 
-function drawMoon(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, now: number) {
-  const glow = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * 1.8);
-  glow.addColorStop(0, "rgba(180, 220, 255, 0.25)");
-  glow.addColorStop(1, "rgba(180, 220, 255, 0)");
-  ctx.fillStyle = glow;
-  ctx.beginPath();
-  ctx.arc(x, y, r * 1.8, 0, Math.PI * 2);
-  ctx.fill();
-  // Base orb — tealish planet
-  const body = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
-  body.addColorStop(0, "#9cf0ff");
-  body.addColorStop(0.6, "#4ba3c7");
-  body.addColorStop(1, "#1a4868");
-  ctx.fillStyle = body;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  // Ink-blot continents
-  ctx.fillStyle = "rgba(30, 80, 60, 0.55)";
-  ctx.beginPath();
-  ctx.ellipse(x - 8 + Math.sin(now / 3000) * 2, y - 10, r * 0.35, r * 0.22, 0.4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(x + 14, y + 18, r * 0.25, r * 0.18, -0.3, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawPlatform(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, color: string) {
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.ellipse(cx, cy, w * 0.55, 18, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "rgba(160, 120, 255, 0.4)";
-  ctx.beginPath();
-  ctx.ellipse(cx, cy - 6, w * 0.55, 10, 0, 0, Math.PI);
-  ctx.fill();
-  // Rocky rim highlights
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.ellipse(cx, cy - 2, w * 0.5, 14, 0, Math.PI, 2 * Math.PI);
-  ctx.stroke();
+function adjustColor(hex: string, delta: number): string {
+  // Darken a #rrggbb color by `delta` (negative darkens, positive
+  // lightens). Clamps to 0-255 per channel.
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) & 0xff;
+  let g = (n >> 8) & 0xff;
+  let b = n & 0xff;
+  r = Math.max(0, Math.min(255, r + delta));
+  g = Math.max(0, Math.min(255, g + delta));
+  b = Math.max(0, Math.min(255, b + delta));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
 function drawCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY: number, angleDeg: number) {
   const rotRad = -((angleDeg * Math.PI) / 180);
   ctx.save();
   ctx.translate(baseX, baseY);
-  // Carriage — small wooden box
+  // Platform under the cannon
+  ctx.fillStyle = "#2a1a40";
+  ctx.beginPath();
+  ctx.ellipse(0, 20, 52, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#4a2a68";
+  ctx.beginPath();
+  ctx.ellipse(0, 14, 50, 8, 0, 0, Math.PI);
+  ctx.fill();
+  // Carriage
   ctx.fillStyle = "#2a1a0c";
   ctx.fillRect(-26, -8, 52, 18);
   ctx.fillStyle = "#1a0f07";
@@ -399,55 +492,17 @@ function drawCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY: number,
   ctx.restore();
 }
 
-// Small jellyfish-ish spectator that bobs next to the cannon — the
-// "second character on the neighbor platform" vibe from Moonsheep.
-function drawSpectator(ctx: CanvasRenderingContext2D, x: number, y: number, now: number) {
-  ctx.save();
-  const bob = Math.sin(now / 500) * 3;
-  ctx.translate(x, y + bob);
-  // Bell
-  const g = ctx.createRadialGradient(0, -4, 2, 0, -4, 18);
-  g.addColorStop(0, "rgba(168, 232, 255, 0.9)");
-  g.addColorStop(1, "rgba(70, 130, 200, 0.6)");
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.ellipse(0, -6, 16, 12, 0, Math.PI, 2 * Math.PI);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(200, 240, 255, 0.8)";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.ellipse(0, -6, 16, 12, 0, Math.PI, 2 * Math.PI);
-  ctx.stroke();
-  // Eyes
-  ctx.fillStyle = "#000";
-  ctx.beginPath(); ctx.arc(-4, -8, 1.5, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(4, -8, 1.5, 0, Math.PI * 2); ctx.fill();
-  // Tentacles
-  ctx.strokeStyle = "rgba(168, 232, 255, 0.7)";
-  ctx.lineWidth = 1.8;
-  for (let i = 0; i < 5; i++) {
-    const tx = -12 + i * 6;
-    ctx.beginPath();
-    ctx.moveTo(tx, -6);
-    ctx.quadraticCurveTo(tx, 4 + Math.sin(now / 200 + i) * 2, tx + Math.sin(now / 180 + i) * 2, 14);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-// Dotted preview arc shown while idle — tells the player where the shot
-// will land before they commit. Dots advance with time so the arc reads
-// as a flight path, not a static curve.
-function drawPreviewArc(ctx: CanvasRenderingContext2D, angleDeg: number, now: number) {
-  const steps = 24;
+function drawPreviewArc(ctx: CanvasRenderingContext2D, traj: Traj, now: number, camX: number) {
+  const steps = 30;
   const phase = (now / 60) % 1;
-  ctx.fillStyle = "rgba(255, 240, 160, 0.6)";
+  ctx.fillStyle = "rgba(255, 240, 160, 0.55)";
   for (let i = 0; i < steps; i++) {
-    const t = (i + phase) / steps;
-    if (t > 1) continue;
-    const [x, y] = arcPoint(t, angleDeg);
+    const t = ((i + phase) / steps) * traj.durationSec;
+    const [x, y] = posAtT(traj, t);
+    const screenX = x - camX;
+    if (screenX < -4 || screenX > W + 4) continue;
     ctx.beginPath();
-    ctx.arc(x, y, 2, 0, Math.PI * 2);
+    ctx.arc(screenX, y, 2.2, 0, Math.PI * 2);
     ctx.fill();
   }
 }
@@ -457,39 +512,41 @@ function drawAnglerfish(ctx: CanvasRenderingContext2D, x: number, y: number, now
   ctx.translate(x, y);
   ctx.fillStyle = "#0a1530";
   ctx.beginPath();
-  ctx.ellipse(0, 0, 26, 18, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, 28, 20, 0, 0, Math.PI * 2);
   ctx.fill();
+  // Jagged teeth
   ctx.fillStyle = "#fff";
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     ctx.beginPath();
-    ctx.moveTo(-22 + i * 7, 0);
-    ctx.lineTo(-19 + i * 7, 5);
-    ctx.lineTo(-16 + i * 7, 0);
+    ctx.moveTo(-24 + i * 7, 2);
+    ctx.lineTo(-21 + i * 7, 8);
+    ctx.lineTo(-18 + i * 7, 2);
     ctx.closePath();
     ctx.fill();
   }
+  // Eye
   ctx.fillStyle = "#fff";
   ctx.beginPath(); ctx.arc(-4, -4, 3, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = "#000";
   ctx.beginPath(); ctx.arc(-3.5, -4, 1.6, 0, Math.PI * 2); ctx.fill();
+  // Lure
   const lureX = -30 + Math.sin(now / 300) * 3;
-  const lureY = -18 + Math.cos(now / 300) * 3;
-  ctx.strokeStyle = "#555";
-  ctx.lineWidth = 1;
+  const lureY = -20 + Math.cos(now / 300) * 3;
+  ctx.strokeStyle = "#555"; ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(-20, -6);
-  ctx.quadraticCurveTo(-26, -14, lureX, lureY);
+  ctx.moveTo(-22, -8);
+  ctx.quadraticCurveTo(-28, -16, lureX, lureY);
   ctx.stroke();
-  const lureGrad = ctx.createRadialGradient(lureX, lureY, 1, lureX, lureY, 10);
+  const lureGrad = ctx.createRadialGradient(lureX, lureY, 1, lureX, lureY, 12);
   lureGrad.addColorStop(0, "#fff8c0");
   lureGrad.addColorStop(1, "rgba(255,230,100,0)");
   ctx.fillStyle = lureGrad;
   ctx.beginPath();
-  ctx.arc(lureX, lureY, 10, 0, Math.PI * 2);
+  ctx.arc(lureX, lureY, 12, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#ffe060";
   ctx.beginPath();
-  ctx.arc(lureX, lureY, 2.5, 0, Math.PI * 2);
+  ctx.arc(lureX, lureY, 2.8, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
