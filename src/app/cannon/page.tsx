@@ -1,17 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import dynamic from "next/dynamic";
 import { keccak256, formatEther, parseEther, toHex } from "viem";
 import { ConnectWallet } from "@/components/ConnectWallet";
+import { CannonCanvas } from "@/components/CannonCanvas";
 import { useAuth } from "@/lib/useSession";
 
-// The Three.js scene is client-only (WebGL) so dynamic() skips SSR and
-// avoids the hydration mismatch on a canvas element.
-const CannonScene = dynamic(() => import("@/components/CannonScene").then((m) => m.CannonScene), {
-  ssr: false,
-  loading: () => <div className="dive-canvas-wrap"><div className="dive-canvas cannon-canvas" /></div>,
-});
+type Angle = 0 | 1 | 2;
+const ANGLE_META: Record<Angle, { label: string; blurb: string }> = {
+  0: { label: "15°", blurb: "Flat shot, fast, tight distance" },
+  1: { label: "45°", blurb: "Balanced arc" },
+  2: { label: "75°", blurb: "Steep & slow, rarer long runs" },
+};
 
 type CannonEvent =
   | { kind: "blot"; value: number }
@@ -46,6 +46,7 @@ export default function CannonPage() {
   const [result, setResult] = useState<PlayResult | null>(null);
   const [animating, setAnimating] = useState(false);
   const [liveMultBps, setLiveMultBps] = useState(0);
+  const [angle, setAngle] = useState<Angle>(1);
 
   const refreshBalance = useCallback(async () => {
     if (!signedIn) return;
@@ -141,9 +142,10 @@ export default function CannonPage() {
       ) : (
         <>
           <div style={{ position: "relative" }}>
-            <CannonScene
+            <CannonCanvas
               events={pending?.events ?? result?.events ?? null}
               animating={animating}
+              angle={angle}
               onAnimDone={() => {
                 setAnimating(false);
                 if (pending) {
@@ -173,7 +175,22 @@ export default function CannonPage() {
           </div>
 
           <div className="panel">
-            <h3 className="panel-title">Load the cannon</h3>
+            <h3 className="panel-title">Angle</h3>
+            <div className="tier-row">
+              {([0, 1, 2] as Angle[]).map((a) => (
+                <button
+                  key={a}
+                  className={`tier-btn${angle === a ? " tier-btn-on" : ""}`}
+                  onClick={() => setAngle(a)}
+                  type="button"
+                  disabled={animating}
+                >
+                  <b>{ANGLE_META[a].label}</b>
+                  <span>{ANGLE_META[a].blurb}</span>
+                </button>
+              ))}
+            </div>
+
             <div className="panel-row buy-row">
               <input
                 className="week-input"
