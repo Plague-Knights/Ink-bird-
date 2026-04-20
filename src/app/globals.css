@@ -488,6 +488,26 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   aspect-ratio: 120 / 170;
 }
 
+.cannon-canvas {
+  aspect-ratio: 480 / 300;
+}
+
+.cannon-hud {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  padding: 6px 14px;
+  background: rgba(4, 20, 44, 0.78);
+  border: 1px solid var(--card-stroke);
+  border-radius: 999px;
+  font-weight: 900;
+  font-size: 22px;
+  color: #ffcf72;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  text-shadow: 0 0 12px rgba(255, 207, 114, 0.4);
+}
+
 .tier-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

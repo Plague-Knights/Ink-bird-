@@ -94,3 +94,28 @@ model DiveBalance {
   wei           String   @default("0") // wei as string
   updatedAt     DateTime @updatedAt
 }
+
+// "Squid Cannon" launcher mode. Same commit-reveal cycle as DiveRound:
+// the server pre-commits keccak256(seed) via /api/cannon/open, the
+// player sends a salt with their bet to /api/cannon/play, the server
+// reveals the seed and the outcome is a deterministic event sequence
+// (ink blots hit + hazard terminator) keyed by
+// uint32(keccak256(seed || salt)) mod datasetSize. totalMultiplierBps
+// is the sum of the blot values in bps (10000 = 1x bet), saved so the
+// client animation can replay it without recomputing.
+model CannonRound {
+  id                  String    @id @default(cuid())
+  address             String    // lowercased 0x… wallet
+  betWei              String    // wei as string, charged from DiveBalance on open
+  userSalt            String    // 0x… hex from the client
+  seedHash            String    // keccak256 of the server seed
+  seed                String?   // raw seed, null until settle
+  outcomeIndex        Int?      // dataset index, null until settle
+  eventSeq            Json?     // array of { kind: 'blot' | 'hazard', value?: number }
+  totalMultiplierBps  Int?      // sum of blot values in bps (100 = 0.01x)
+  payoutWei           String?   // wei as string
+  createdAt           DateTime  @default(now())
+  settledAt           DateTime?
+
+  @@index([address, createdAt])
+}
