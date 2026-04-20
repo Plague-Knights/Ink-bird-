@@ -229,6 +229,85 @@ export default function DivePage() {
   );
 }
 
+type Bubble = { x: number; y: number; r: number; vy: number; life: number };
+
+function drawSquid(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  phase: number,
+  speed: number,
+) {
+  const stretch = 1 + Math.min(0.35, speed * 0.02);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(1, stretch);
+
+  // Mantle — teardrop pointing up, head/tentacles down. Purple-cyan inky.
+  const mantleGrad = ctx.createLinearGradient(0, -36, 0, 20);
+  mantleGrad.addColorStop(0, "#9f7cff");
+  mantleGrad.addColorStop(1, "#5fd8ff");
+  ctx.fillStyle = mantleGrad;
+  ctx.beginPath();
+  ctx.moveTo(0, -38);
+  ctx.bezierCurveTo(-14, -32, -16, 0, -11, 16);
+  ctx.bezierCurveTo(-8, 20, 8, 20, 11, 16);
+  ctx.bezierCurveTo(16, 0, 14, -32, 0, -38);
+  ctx.fill();
+
+  // Fins — side triangles near the top of the mantle
+  ctx.fillStyle = "rgba(95, 216, 255, 0.55)";
+  ctx.beginPath();
+  ctx.moveTo(-11, -20);
+  ctx.lineTo(-22, -26 + Math.sin(phase * 1.4) * 1.5);
+  ctx.lineTo(-11, -6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(11, -20);
+  ctx.lineTo(22, -26 + Math.sin(phase * 1.4 + Math.PI) * 1.5);
+  ctx.lineTo(11, -6);
+  ctx.closePath();
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = "#021629";
+  ctx.beginPath();
+  ctx.arc(-4, -4, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(-3, -5, 1.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tentacles — 8 wavy curves trailing below
+  ctx.strokeStyle = "#8a66e8";
+  ctx.lineWidth = 2.6;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 8; i++) {
+    const t = i / 7 - 0.5;
+    const rootX = t * 18;
+    const wave = Math.sin(phase * 2 + i * 0.7);
+    const tipX = t * 28 + wave * 3;
+    const midX = (rootX + tipX) / 2 + Math.sin(phase * 1.6 + i) * 4;
+    ctx.beginPath();
+    ctx.moveTo(rootX, 14);
+    ctx.quadraticCurveTo(midX, 24, tipX, 34 + wave * 1.5);
+    ctx.stroke();
+  }
+  // Two longer feeding arms on the outer edges
+  ctx.strokeStyle = "#b196ff";
+  for (const sign of [-1, 1] as const) {
+    const wave = Math.sin(phase * 1.8 + sign);
+    ctx.beginPath();
+    ctx.moveTo(sign * 9, 14);
+    ctx.quadraticCurveTo(sign * 18 + wave * 3, 30, sign * 22 + wave * 4, 46);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function DiveCanvas({
   distance,
   animating,
@@ -240,6 +319,8 @@ function DiveCanvas({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const startRef = useRef<number>(0);
+  const bubblesRef = useRef<Bubble[]>([]);
+  const lastEmitRef = useRef<number>(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -248,68 +329,131 @@ function DiveCanvas({
     if (!ctx) return;
 
     let raf = 0;
+    const W = canvas.width;
+    const H = canvas.height;
+    const surfaceY = 36;
+    const maxDepthPx = H - surfaceY - 40;
+    const maxDepthM = 1000;
+
+    let prevSquidY = surfaceY;
+
     const draw = (now: number) => {
-      const w = canvas.width;
-      const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
+      ctx.clearRect(0, 0, W, H);
 
-      // Ocean gradient
-      const grd = ctx.createLinearGradient(0, 0, 0, h);
-      grd.addColorStop(0, "#061a36");
-      grd.addColorStop(1, "#020716");
-      ctx.fillStyle = grd;
-      ctx.fillRect(0, 0, w, h);
+      // Sky above the surface
+      const sky = ctx.createLinearGradient(0, 0, 0, surfaceY);
+      sky.addColorStop(0, "#1b3b66");
+      sky.addColorStop(1, "#2d6aa3");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, surfaceY);
 
-      // Depth ticks at 100-meter marks, mapping 0..1000m -> left..right
-      ctx.strokeStyle = "rgba(120,200,230,0.15)";
-      ctx.lineWidth = 1;
-      for (let m = 100; m <= 1000; m += 100) {
-        const x = (m / 1000) * w;
+      // Ocean gradient — lighter near surface, very dark in the abyss
+      const sea = ctx.createLinearGradient(0, surfaceY, 0, H);
+      sea.addColorStop(0, "#1a5b9a");
+      sea.addColorStop(0.3, "#0b2d5c");
+      sea.addColorStop(1, "#01030a");
+      ctx.fillStyle = sea;
+      ctx.fillRect(0, surfaceY, W, H - surfaceY);
+
+      // Subtle god-ray shimmer from the surface
+      ctx.fillStyle = "rgba(120, 200, 230, 0.06)";
+      for (let i = 0; i < 4; i++) {
+        const cx = ((i + 0.5) * W) / 4 + Math.sin(now / 2200 + i) * 20;
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
+        ctx.moveTo(cx - 20, surfaceY);
+        ctx.lineTo(cx + 20, surfaceY);
+        ctx.lineTo(cx + 60, H);
+        ctx.lineTo(cx - 60, H);
+        ctx.closePath();
+        ctx.fill();
       }
 
-      // Squid position
-      let squidX = 20;
-      if (distance != null && animating) {
-        if (!startRef.current) startRef.current = now;
-        const tNorm = Math.min(1, (now - startRef.current) / 1200);
-        const eased = 1 - Math.pow(1 - tNorm, 3);
-        squidX = 20 + eased * ((Math.min(distance, 1000) / 1000) * (w - 40));
-        if (tNorm >= 1) {
-          startRef.current = 0;
-          onAnimDone();
-        }
-      } else if (distance != null) {
-        squidX = 20 + (Math.min(distance, 1000) / 1000) * (w - 40);
-      }
-      const squidY = h / 2;
-
-      // trail
-      ctx.strokeStyle = "rgba(95,216,255,0.35)";
-      ctx.lineWidth = 2;
+      // Surface ripples
+      ctx.strokeStyle = "rgba(200, 230, 255, 0.25)";
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(20, squidY);
-      ctx.lineTo(squidX, squidY);
+      for (let x = 0; x <= W; x += 4) {
+        const y = surfaceY + Math.sin((x + now / 60) / 22) * 2;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
       ctx.stroke();
 
-      // squid body
-      ctx.fillStyle = "#5fd8ff";
-      ctx.beginPath();
-      ctx.arc(squidX, squidY, 10, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#021629";
-      ctx.beginPath();
-      ctx.arc(squidX - 2, squidY - 2, 2, 0, Math.PI * 2);
-      ctx.fill();
+      // Depth labels on the right edge
+      ctx.fillStyle = "rgba(180, 220, 240, 0.35)";
+      ctx.font = "10px Rubik, sans-serif";
+      ctx.textAlign = "right";
+      for (const m of [100, 250, 500, 750, 1000]) {
+        const y = surfaceY + (m / maxDepthM) * maxDepthPx;
+        ctx.fillText(`${m}m`, W - 6, y);
+        ctx.strokeStyle = "rgba(120, 200, 230, 0.08)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W - 34, y);
+        ctx.stroke();
+      }
+      ctx.textAlign = "start";
 
-      // distance marker
+      // Squid target + current position
+      const cx = W / 2;
+      let squidY = surfaceY;
+      let speed = 0;
       if (distance != null) {
+        const targetY = surfaceY + (Math.min(distance, maxDepthM) / maxDepthM) * maxDepthPx;
+        if (animating) {
+          if (!startRef.current) startRef.current = now;
+          const tNorm = Math.min(1, (now - startRef.current) / 1600);
+          const eased = 1 - Math.pow(1 - tNorm, 3);
+          squidY = surfaceY + eased * (targetY - surfaceY);
+          if (tNorm >= 1) {
+            startRef.current = 0;
+            onAnimDone();
+          }
+        } else {
+          squidY = targetY;
+        }
+      }
+      speed = squidY - prevSquidY;
+      prevSquidY = squidY;
+
+      // Bubble trail — emit while moving, they rise toward the surface
+      if (animating && speed > 0.5 && now - lastEmitRef.current > 40) {
+        lastEmitRef.current = now;
+        bubblesRef.current.push({
+          x: cx + (Math.random() - 0.5) * 18,
+          y: squidY - 6,
+          r: 1 + Math.random() * 2.5,
+          vy: -0.4 - Math.random() * 0.8,
+          life: 80 + Math.random() * 40,
+        });
+      }
+      const bubbles = bubblesRef.current;
+      for (let i = bubbles.length - 1; i >= 0; i--) {
+        const b = bubbles[i];
+        b.x += Math.sin(now / 400 + b.y / 30) * 0.2;
+        b.y += b.vy;
+        b.life -= 1;
+        if (b.life <= 0 || b.y < surfaceY - 4) bubbles.splice(i, 1);
+      }
+      ctx.fillStyle = "rgba(200, 230, 255, 0.55)";
+      for (const b of bubbles) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Squid (phase ticks with real time so it keeps undulating on idle)
+      const phase = now / 140;
+      drawSquid(ctx, cx, squidY, phase, Math.max(0, speed));
+
+      // Settled distance marker
+      if (distance != null && !animating) {
         ctx.fillStyle = "#e8f0ff";
         ctx.font = "14px Rubik, sans-serif";
-        ctx.fillText(`${distance} m`, squidX + 12, squidY + 4);
+        ctx.textAlign = "center";
+        ctx.fillText(`${distance} m`, cx, squidY + 60);
+        ctx.textAlign = "start";
       }
 
       raf = requestAnimationFrame(draw);
@@ -319,12 +463,15 @@ function DiveCanvas({
   }, [distance, animating, onAnimDone]);
 
   useEffect(() => {
-    if (animating) startRef.current = 0;
+    if (animating) {
+      startRef.current = 0;
+      bubblesRef.current = [];
+    }
   }, [animating]);
 
   return (
     <div className="dive-canvas-wrap">
-      <canvas ref={canvasRef} width={960} height={180} className="dive-canvas" />
+      <canvas ref={canvasRef} width={480} height={560} className="dive-canvas" />
     </div>
   );
 }
