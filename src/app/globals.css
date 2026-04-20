@@ -492,6 +492,10 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   aspect-ratio: 480 / 300;
 }
 
+.launch-intro-canvas {
+  aspect-ratio: 480 / 640;
+}
+
 .cannon-hud {
   position: absolute;
   top: 18px;

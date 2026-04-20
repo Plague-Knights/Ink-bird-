@@ -95,6 +95,30 @@ model DiveBalance {
   updatedAt     DateTime @updatedAt
 }
 
+// "Squid Launch" skill-bet mode. Reuses the main flappy game (simulate.ts
+// + Game.tsx) verbatim — the player bets, a cannon intro plays, then
+// it's the regular skill loop. The numeric sim seed is derived
+// deterministically from keccak256(seed || salt) so the obstacle set
+// the player faces is pinned at commit time; distance achieved is pure
+// skill on top of that fixed map. Server re-runs simulate.replay() to
+// validate inputs and compute the paid distance.
+model LaunchRound {
+  id            String    @id @default(cuid())
+  address       String
+  betWei        String
+  userSalt      String
+  seedHash      String
+  seed          String?
+  simSeed       BigInt?   // uint32 sim seed derived from keccak256(seed||salt)
+  score         Int?      // validated pipes-passed from replay
+  framesRun     Int?
+  payoutWei     String?
+  createdAt     DateTime  @default(now())
+  settledAt     DateTime?
+
+  @@index([address, createdAt])
+}
+
 // "Squid Cannon" launcher mode. Same commit-reveal cycle as DiveRound:
 // the server pre-commits keccak256(seed) via /api/cannon/open, the
 // player sends a salt with their bet to /api/cannon/play, the server
