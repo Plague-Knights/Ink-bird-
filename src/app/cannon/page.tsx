@@ -6,12 +6,9 @@ import { ConnectWallet } from "@/components/ConnectWallet";
 import { CannonCanvas } from "@/components/CannonCanvas";
 import { useAuth } from "@/lib/useSession";
 
-type Angle = 0 | 1 | 2;
-const ANGLE_META: Record<Angle, { label: string; blurb: string }> = {
-  0: { label: "15°", blurb: "Flat shot, fast, tight distance" },
-  1: { label: "45°", blurb: "Balanced arc" },
-  2: { label: "75°", blurb: "Steep & slow, rarer long runs" },
-};
+const ANGLE_MIN = 20;
+const ANGLE_MAX = 80;
+const ANGLE_STEP = 5;
 
 type CannonEvent =
   | { kind: "blot"; value: number }
@@ -46,7 +43,7 @@ export default function CannonPage() {
   const [result, setResult] = useState<PlayResult | null>(null);
   const [animating, setAnimating] = useState(false);
   const [liveMultBps, setLiveMultBps] = useState(0);
-  const [angle, setAngle] = useState<Angle>(1);
+  const [angleDeg, setAngleDeg] = useState<number>(45);
 
   const refreshBalance = useCallback(async () => {
     if (!signedIn) return;
@@ -71,6 +68,10 @@ export default function CannonPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Faucet failed");
     }
+  }, []);
+
+  const nudgeAngle = useCallback((delta: number) => {
+    setAngleDeg((a) => Math.max(ANGLE_MIN, Math.min(ANGLE_MAX, a + delta)));
   }, []);
 
   const launch = useCallback(async () => {
@@ -127,6 +128,7 @@ export default function CannonPage() {
   }
 
   const multX = (liveMultBps / 10000).toFixed(2);
+  const canInteract = !animating && !busy;
 
   return (
     <div className="wrap">
@@ -141,11 +143,39 @@ export default function CannonPage() {
         </div>
       ) : (
         <>
-          <div style={{ position: "relative" }}>
+          <div className="cannon-stage">
+            {/* Angle picker overlaid at the top of the canvas. Up raises the
+                barrel (steeper arc), Down flattens. Matches Moonsheep's
+                single-column UX. */}
+            <div className="cannon-angle-bar">
+              <button
+                className="icon-btn cannon-angle-btn"
+                onClick={() => nudgeAngle(ANGLE_STEP)}
+                disabled={!canInteract}
+                type="button"
+                aria-label="Angle up"
+              >
+                ▲
+              </button>
+              <div className="cannon-angle-disc">
+                <span>ANGLE</span>
+                <b>{angleDeg}°</b>
+              </div>
+              <button
+                className="icon-btn cannon-angle-btn"
+                onClick={() => nudgeAngle(-ANGLE_STEP)}
+                disabled={!canInteract}
+                type="button"
+                aria-label="Angle down"
+              >
+                ▼
+              </button>
+            </div>
+
             <CannonCanvas
               events={pending?.events ?? result?.events ?? null}
               animating={animating}
-              angle={angle}
+              angleDeg={angleDeg}
               onAnimDone={() => {
                 setAnimating(false);
                 if (pending) {
@@ -155,60 +185,40 @@ export default function CannonPage() {
               }}
               onMultiplierUpdate={setLiveMultBps}
             />
+
             {animating && (
               <div className="cannon-hud">
                 <span>x{multX}</span>
               </div>
             )}
-          </div>
 
-          <div className="panel">
-            <div className="panel-row">
-              <div className="stat">
-                <span>Balance</span>
-                <b>{balance == null ? "..." : `${Number(formatEther(balance)).toFixed(4)} tETH`}</b>
-              </div>
-              <button className="icon-btn" onClick={faucet} type="button">
-                + 0.1 tETH FAUCET
-              </button>
-            </div>
-          </div>
-
-          <div className="panel">
-            <h3 className="panel-title">Angle</h3>
-            <div className="tier-row">
-              {([0, 1, 2] as Angle[]).map((a) => (
-                <button
-                  key={a}
-                  className={`tier-btn${angle === a ? " tier-btn-on" : ""}`}
-                  onClick={() => setAngle(a)}
-                  type="button"
-                  disabled={animating}
-                >
-                  <b>{ANGLE_META[a].label}</b>
-                  <span>{ANGLE_META[a].blurb}</span>
+            {/* Bet + launch pinned to the bottom of the canvas stage,
+                Moonsheep-style. */}
+            <div className="cannon-betbar">
+              <div className="cannon-balance">
+                <span>tETH</span>
+                <b>{balance == null ? "…" : Number(formatEther(balance)).toFixed(4)}</b>
+                <button className="icon-btn" onClick={faucet} type="button" disabled={!canInteract}>
+                  +
                 </button>
-              ))}
-            </div>
-
-            <div className="panel-row buy-row">
+              </div>
               <input
-                className="week-input"
+                className="week-input cannon-bet-input"
                 inputMode="decimal"
                 value={betStr}
                 onChange={(e) => setBetStr(e.target.value)}
-                placeholder="Bet in ETH"
+                placeholder="Bet"
               />
               <button
-                className="big-btn"
+                className="big-btn cannon-launch-btn"
                 onClick={launch}
-                disabled={busy || animating}
+                disabled={!canInteract}
                 type="button"
               >
-                {busy ? "ARMING..." : "LAUNCH"}
+                {busy ? "…" : "LAUNCH"}
               </button>
             </div>
-            {error && <p className="wallet-error">{error}</p>}
+            {error && <p className="wallet-error cannon-error">{error}</p>}
           </div>
 
           {result && (
