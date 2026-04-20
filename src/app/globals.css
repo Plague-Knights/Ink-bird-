@@ -481,6 +481,13 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   display: block;
 }
 
+.pixel-canvas {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  aspect-ratio: 120 / 140;
+}
+
 .tier-row {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
