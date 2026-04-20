@@ -2,7 +2,7 @@
 
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useGLTF, Preload } from "@react-three/drei";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
@@ -66,7 +66,6 @@ function Contents({ events, animating, onAnimDone, onMultiplierUpdate }: Props) 
       <Lighting />
       <OceanBackdrop />
       <Cannon />
-      <Blots events={events} />
       <Hazard events={events} />
       <Squid
         events={events}
@@ -151,52 +150,22 @@ function arcPoint(t: number, totalBlots: number): [number, number, number] {
   return [x, y, 0];
 }
 
-function Blots({ events }: { events: readonly CannonEvent[] | null }) {
-  const blots = useMemo(() => {
-    if (!events) return [] as Array<{ pos: [number, number, number]; value: number }>;
-    const total = blotCount(events);
-    let i = 0;
-    const out: Array<{ pos: [number, number, number]; value: number }> = [];
-    for (const e of events) {
-      if (e.kind !== "blot") continue;
-      i++;
-      // Space evenly at t = i / (total + padding-for-hazard).
-      const t = i / (total + 1);
-      out.push({ pos: arcPoint(t, total), value: e.value });
-    }
-    return out;
-  }, [events]);
-
-  const group = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    if (!group.current) return;
-    const t = clock.elapsedTime;
-    group.current.children.forEach((c, i) => {
-      c.scale.setScalar(1 + Math.sin(t * 2.5 + i * 0.7) * 0.08);
-    });
-  });
-
-  return (
-    <group ref={group}>
-      {blots.map((b, i) => {
-        // Bigger blot = bigger sphere with warmer emissive
-        const size = 0.22 + Math.min(0.35, b.value / 20000);
-        const color = b.value > 3000 ? "#ffc24a" : b.value > 1000 ? "#c986ff" : "#5fd8ff";
-        return (
-          <mesh key={i} position={b.pos} userData={{ blotIndex: i }}>
-            <sphereGeometry args={[size, 16, 16]} />
-            <meshStandardMaterial
-              color={color}
-              emissive={color}
-              emissiveIntensity={0.9}
-              roughness={0.3}
-              metalness={0.1}
-            />
-          </mesh>
-        );
-      })}
-    </group>
-  );
+// Normalized t (0..1) where the hazard sits along the arc. If no hazard,
+// returns null. Hazard position is proportional to how many blots fire
+// before it in the original event list — server-truth for "how far did
+// the squid get."
+function hazardT(events: readonly CannonEvent[] | null): number | null {
+  if (!events) return null;
+  const total = blotCount(events);
+  if (total === 0) {
+    return events[0]?.kind === "hazard" ? 0 : null;
+  }
+  let blotsBefore = 0;
+  for (const e of events) {
+    if (e.kind === "hazard") return blotsBefore / total;
+    blotsBefore++;
+  }
+  return null;
 }
 
 function Hazard({ events }: { events: readonly CannonEvent[] | null }) {
@@ -210,11 +179,9 @@ function Hazard({ events }: { events: readonly CannonEvent[] | null }) {
     group.current.rotation.y = Math.PI / 2 + Math.sin(clock.elapsedTime * 0.5) * 0.1;
   });
 
-  if (!events) return null;
-  const hasHazard = events.some((e) => e.kind === "hazard");
-  if (!hasHazard) return null;
-  const total = blotCount(events);
-  const t = 1;
+  const t = hazardT(events);
+  if (t == null) return null;
+  const total = Math.max(1, blotCount(events));
   const [x, y, z] = arcPoint(t, total);
   return (
     <group ref={group} position={[x, y, z]}>
@@ -230,25 +197,35 @@ function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
 
   const startTimeRef = useRef<number>(0);
   const doneRef = useRef(false);
-  const splashesRef = useRef<Array<{ age: number; pos: [number, number, number]; color: string }>>([]);
-  const hitSetRef = useRef<Set<number>>(new Set());
-  const accumulatedBpsRef = useRef<number>(0);
 
-  const blotPlan = useMemo(() => {
-    if (!events) return [] as Array<{ t: number; value: number }>;
-    const blots = events.filter((e) => e.kind === "blot") as Array<{ kind: "blot"; value: number }>;
-    const total = blots.length;
-    return blots.map((b, i) => ({
-      t: (i + 1) / (total + 1),
-      value: b.value,
-    }));
+  // Distance-as-multiplier model: the server computes total payout bps
+  // up-front; we ramp from 0 → total over flight time. If a hazard is
+  // present the flight ends early at `maxT`, so the ramp only reaches
+  // (maxT / 1) * total — which equals the server's payout since the
+  // server's `totalMultiplierBps` already sums blots before the hazard.
+  const totalBps = useMemo(() => {
+    if (!events) return 0;
+    let sum = 0;
+    for (const e of events) {
+      if (e.kind === "hazard") return sum;
+      sum += e.value;
+    }
+    return sum;
   }, [events]);
 
-  // Phase duration depends on blot count; min 1.2s.
+  const maxT = useMemo(() => {
+    const hT = hazardT(events);
+    return hT ?? 1;
+  }, [events]);
+
+  const totalBlotsForArc = useMemo(() => blotCount(events), [events]);
+
+  // Flight duration scales with how far the squid will travel, so short
+  // deaths feel snappy and long clean runs get time to read.
   const flightSeconds = useMemo(() => {
-    if (!events) return 1;
-    return Math.max(1.2, blotCount(events) * FLIGHT_SECONDS_PER_BLOT + 0.8);
-  }, [events]);
+    const span = Math.max(1, totalBlotsForArc) * maxT;
+    return Math.max(0.6, span * FLIGHT_SECONDS_PER_BLOT + 0.5);
+  }, [totalBlotsForArc, maxT]);
 
   useFrame(({ clock }) => {
     if (!group.current) return;
@@ -258,38 +235,26 @@ function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
       if (startTimeRef.current === 0) {
         startTimeRef.current = now;
         doneRef.current = false;
-        hitSetRef.current = new Set();
-        splashesRef.current = [];
-        accumulatedBpsRef.current = 0;
         if (onMultiplierUpdate) onMultiplierUpdate(0);
       }
       const elapsed = now - startTimeRef.current;
       const linger = LINGER_SECONDS;
-      const tPhase = Math.min(1, elapsed / flightSeconds);
-      const total = blotCount(events);
-      const [x, y, z] = arcPoint(tPhase, total);
+      const progress = Math.min(1, elapsed / flightSeconds); // 0..1 of flight time
+      const tPhase = progress * maxT; // clamp arc travel to hazard cutoff
+      const [x, y, z] = arcPoint(tPhase, totalBlotsForArc);
       group.current.position.set(x, y, z);
       // Face the direction of travel (slight tilt)
-      const slope = total > 0 ? Math.PI * (0.5 - tPhase) * 0.6 : 0;
+      const slope = totalBlotsForArc > 0 ? Math.PI * (0.5 - tPhase) * 0.6 : 0;
       group.current.rotation.set(slope, Math.PI, 0);
 
-      // Check blot hits
-      for (let i = 0; i < blotPlan.length; i++) {
-        if (hitSetRef.current.has(i)) continue;
-        if (tPhase >= blotPlan[i].t) {
-          hitSetRef.current.add(i);
-          accumulatedBpsRef.current += blotPlan[i].value;
-          if (onMultiplierUpdate) onMultiplierUpdate(accumulatedBpsRef.current);
-          const [sx, sy, sz] = arcPoint(blotPlan[i].t, total);
-          splashesRef.current.push({
-            age: 0,
-            pos: [sx, sy, sz],
-            color: blotPlan[i].value > 3000 ? "#ffc24a" : blotPlan[i].value > 1000 ? "#c986ff" : "#5fd8ff",
-          });
-        }
+      // Distance ramps the multiplier linearly: when the squid hits
+      // maxT, it's earned `totalBps`. Before then it's a proportional
+      // preview of what the run will pay if it keeps going.
+      if (onMultiplierUpdate) {
+        onMultiplierUpdate(Math.round(progress * totalBps));
       }
 
-      if (tPhase >= 1 && elapsed >= flightSeconds + linger && !doneRef.current) {
+      if (progress >= 1 && elapsed >= flightSeconds + linger && !doneRef.current) {
         doneRef.current = true;
         startTimeRef.current = 0;
         onAnimDone();
@@ -299,15 +264,11 @@ function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
       group.current.position.set(LAUNCH_X, LAUNCH_Y, 0);
       group.current.rotation.set(0, Math.PI, 0);
     }
-
-    // Age splash particles (not currently drawn — slot for a particle layer)
-    splashesRef.current.forEach((s) => (s.age += 1 / 60));
-    splashesRef.current = splashesRef.current.filter((s) => s.age < 0.6);
   });
 
   return (
     <group ref={group} position={[LAUNCH_X, LAUNCH_Y, 0]}>
-      <primitive object={cloned} scale={0.28} />
+      <primitive object={cloned} scale={0.75} />
       {/* Warm halo from the cannon's muzzle flash during early flight */}
       <pointLight color="#ffa85f" intensity={0.7} distance={3} decay={2} />
     </group>
