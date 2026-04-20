@@ -2,6 +2,12 @@ import type { Metadata, Viewport } from "next";
 import { Providers } from "./providers";
 import "./globals.css";
 
+// Render on every request so deploy changes promote immediately.
+// Railway's Fastly edge was caching the prerendered root for a year
+// (s-maxage=31536000), which meant the / → /cannon redirect never
+// reached visitors holding the stale HTML.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Ink Squid",
   description: "Swim through the reef. Collect ink droplets. Submit on Ink chain.",
