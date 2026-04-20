@@ -446,6 +446,68 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   white-space: nowrap;
 }
 
+.dive-canvas-wrap {
+  width: 100%;
+  max-width: 480px;
+  margin-top: 14px;
+}
+.dive-canvas {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 960 / 180;
+  background: var(--bg-1);
+  border: 1px solid var(--card-stroke);
+  border-radius: 14px;
+  display: block;
+}
+
+.tier-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.tier-btn {
+  background: rgba(4, 20, 44, 0.5);
+  border: 1px solid var(--card-stroke);
+  border-radius: 12px;
+  padding: 10px;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  transition: background .15s, border-color .15s;
+}
+.tier-btn b {
+  font-size: 13px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.tier-btn span {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+.tier-btn-on {
+  background: rgba(95, 216, 255, 0.12);
+  border-color: rgba(95, 216, 255, 0.5);
+}
+
+.proof {
+  margin: 10px 0 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.proof dt { color: var(--text); }
+.proof dd { margin: 0; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.proof code { font-family: inherit; }
+
 .packs {
   display: flex;
   align-items: center;

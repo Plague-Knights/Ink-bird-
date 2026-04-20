@@ -63,3 +63,34 @@ model Referral {
 
   @@index([referrer])
 }
+
+// Prototype "Squid Dive" gambling mode. Commit-reveal is fully off-chain
+// for now: the server generates a secret seed, publishes keccak256(seed)
+// when the round opens, and reveals the raw seed on settle. The outcome
+// index is keccak256(seed || userSalt) mod datasetSize. Everything needed
+// to verify is stored on the row so /api/dive/verify can prove fairness.
+model DiveRound {
+  id            String    @id @default(cuid())
+  address       String    // lowercased 0x… wallet of the player
+  tier          String    // "low" | "mid" | "high"
+  betWei        String    // wei as string; charged from DiveBalance on open
+  userSalt      String    // 0x… hex from the client, bound before reveal
+  seedHash      String    // keccak256 of the server seed, committed on open
+  seed          String?   // raw server seed, null until settle
+  outcomeIndex  Int?      // keccak256(seed || salt) mod N, null until settle
+  distance      Int?      // chosen from tier dataset[outcomeIndex]
+  payoutWei     String?   // wei as string, null until settle
+  createdAt     DateTime  @default(now())
+  settledAt     DateTime?
+
+  @@index([address, createdAt])
+}
+
+// Mock wei balance for the prototype. Funded via /api/dive/faucet during
+// testing; no real ETH changes hands. When we wire the on-chain contract,
+// this table goes away and the contract's internal ledger becomes truth.
+model DiveBalance {
+  address       String   @id  // lowercased 0x…
+  wei           String   @default("0") // wei as string
+  updatedAt     DateTime @updatedAt
+}
