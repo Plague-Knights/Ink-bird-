@@ -489,7 +489,11 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
 }
 
 .cannon-canvas {
-  aspect-ratio: 480 / 300;
+  aspect-ratio: 480 / 720;
+}
+
+.cannon-stage .dive-canvas-wrap {
+  max-width: 560px;
 }
 
 .cannon2d-canvas {

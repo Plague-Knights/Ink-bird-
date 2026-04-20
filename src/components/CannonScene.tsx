@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF, Preload } from "@react-three/drei";
 import { Suspense, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -40,7 +40,7 @@ export function CannonScene({ events, animating, onAnimDone, onMultiplierUpdate 
         <Canvas
           gl={{ antialias: true, alpha: false }}
           dpr={[1, 2]}
-          camera={{ fov: 40, position: [0, 1.0, 9], near: 0.1, far: 200 }}
+          camera={{ fov: 40, position: [-1.7, 1.0, 12], near: 0.1, far: 200 }}
           style={{ width: "100%", height: "100%", display: "block" }}
         >
           <color attach="background" args={["#021120"]} />
@@ -61,8 +61,13 @@ export function CannonScene({ events, animating, onAnimDone, onMultiplierUpdate 
 }
 
 function Contents({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
+  // Shared live squid position — Squid writes, CameraRig reads. Starts
+  // at the launch point so the idle framing already looks right.
+  const squidPos = useRef(new THREE.Vector3(LAUNCH_X, LAUNCH_Y, 0));
+
   return (
     <>
+      <CameraRig squidPos={squidPos} animating={animating} />
       <Lighting />
       <OceanBackdrop />
       <Cannon />
@@ -72,9 +77,32 @@ function Contents({ events, animating, onAnimDone, onMultiplierUpdate }: Props) 
         animating={animating}
         onAnimDone={onAnimDone}
         onMultiplierUpdate={onMultiplierUpdate}
+        posOut={squidPos}
       />
     </>
   );
+}
+
+// Pans the camera horizontally to follow the squid so long runs don't
+// fly off-screen. When idle, eases back to the cannon so the scene
+// reads as "loaded, ready to fire."
+function CameraRig({
+  squidPos,
+  animating,
+}: {
+  squidPos: React.RefObject<THREE.Vector3>;
+  animating: boolean;
+}) {
+  const { camera } = useThree();
+  useFrame((_, dt) => {
+    const target = animating
+      ? squidPos.current.x + 2.4 // lead the squid a little so it reads as flying into open water
+      : LAUNCH_X + 3.8;           // idle framing shows cannon + first few units of flight path
+    const lerp = Math.min(1, dt * 4);
+    camera.position.x += (target - camera.position.x) * lerp;
+    camera.lookAt(camera.position.x - 2.4, 0, 0);
+  });
+  return null;
 }
 
 function Lighting() {
@@ -91,22 +119,27 @@ function Lighting() {
 function OceanBackdrop() {
   // Twin-plane backdrop — a deep-water gradient behind the arc, plus a
   // subtler foreground water plane so bubbles/particles read against
-  // depth. Tiled noise would be nicer but is overkill for the MVP.
+  // depth. Follows the camera horizontally so long arcs don't scroll
+  // past the edge of the painted water.
+  const ref = useRef<THREE.Group>(null);
+  useFrame(({ camera }) => {
+    if (ref.current) ref.current.position.x = camera.position.x;
+  });
   return (
-    <>
+    <group ref={ref}>
       <mesh position={[0, 0, -4]}>
-        <planeGeometry args={[40, 16]} />
+        <planeGeometry args={[60, 22]} />
         <meshBasicMaterial color="#02142a" />
       </mesh>
-      <mesh position={[0, 4, -3.5]}>
-        <planeGeometry args={[40, 6]} />
+      <mesh position={[0, 6, -3.5]}>
+        <planeGeometry args={[60, 10]} />
         <meshBasicMaterial color="#0b3a66" transparent opacity={0.75} />
       </mesh>
-      <mesh position={[0, -3.5, -3.5]}>
-        <planeGeometry args={[40, 6]} />
+      <mesh position={[0, -5, -3.5]}>
+        <planeGeometry args={[60, 10]} />
         <meshBasicMaterial color="#010812" />
       </mesh>
-    </>
+    </group>
   );
 }
 
@@ -190,7 +223,7 @@ function Hazard({ events }: { events: readonly CannonEvent[] | null }) {
   );
 }
 
-function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
+function Squid({ events, animating, onAnimDone, onMultiplierUpdate, posOut }: Props & { posOut?: React.RefObject<THREE.Vector3> }) {
   const gltf = useGLTF("/models/squid-cannon.glb", true, true, withMeshopt);
   const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
   const group = useRef<THREE.Group>(null);
@@ -243,6 +276,7 @@ function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
       const tPhase = progress * maxT; // clamp arc travel to hazard cutoff
       const [x, y, z] = arcPoint(tPhase, totalBlotsForArc);
       group.current.position.set(x, y, z);
+      if (posOut) posOut.current.set(x, y, z);
       // Face the direction of travel (slight tilt)
       const slope = totalBlotsForArc > 0 ? Math.PI * (0.5 - tPhase) * 0.6 : 0;
       group.current.rotation.set(slope, Math.PI, 0);
@@ -262,6 +296,7 @@ function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
     } else if (!events) {
       // Idle pose — sit in the cannon mouth
       group.current.position.set(LAUNCH_X, LAUNCH_Y, 0);
+      if (posOut) posOut.current.set(LAUNCH_X, LAUNCH_Y, 0);
       group.current.rotation.set(0, Math.PI, 0);
     }
   });
