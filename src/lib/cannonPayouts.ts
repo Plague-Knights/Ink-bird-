@@ -1,16 +1,20 @@
 // Squid Cannon outcome dataset.
 //
-// Each entry is a sequence of events the squid plays out:
+// Each entry is a sequence of events the squid plays out IN ORDER:
 //   - blot: collectible ink blot with a bps multiplier (10000 = 1x bet)
-//   - hazard: squid slams into a rock / anglerfish / net, run ends
+//   - hazard: squid hits a rock / spike / anglerfish, flight ends here
 //
-// Payout = sum of blot values (bps) / 10000 * bet. Sequences always end
-// with a hazard *except* rare "home run" rows that terminate on a blot
-// (the squid breaks through the water and walks away with everything).
+// Payout = sum of blot bps collected BEFORE the first hazard.
+// If the first event is a hazard, payout is 0.
+// If there is no hazard, payout is the sum of all blot values.
 //
-// Dataset is deterministic (mulberry32 seeded per-tier) and
-// sum-normalized so the mean total multiplier over uniform index is
-// exactly 9600 bps (= 0.96 × bet, 96% RTP).
+// This lets us model Moonsheep's "sometimes it just dies on a rock"
+// moments. About 65% of sequences hit a hazard somewhere mid-flight
+// and zero out whatever was collected; the other 35% are clean runs
+// that keep everything.
+//
+// Dataset is deterministic (mulberry32 seeded) and scaled so the
+// mean payout over uniform index is exactly TARGET_MEAN_BPS (96% RTP).
 
 export type CannonEvent =
   | { kind: "blot"; value: number } // value is in bps (100 = 0.01x)
@@ -18,6 +22,10 @@ export type CannonEvent =
 
 const DATASET_SIZE = 256;
 const TARGET_MEAN_BPS = 9600;
+// Fraction of sequences that contain a hazard anywhere in the event
+// list. Hazard placement is biased earlier so short deaths dominate
+// for dramatic losses, matching Moonsheep pacing.
+const HAZARD_SEQUENCE_FRACTION = 0.65;
 
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
@@ -30,64 +38,74 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-// A "raw" sequence — blot values come out unscaled; we normalize after.
-function generateRawSequence(rng: () => number): number[] {
-  const roll = rng();
-  // Outcome shape distribution:
-  //  45% short: 0-1 blot then hazard (fast losses)
-  //  30% medium: 2-4 blots then hazard
-  //  18% long: 5-10 blots then hazard
-  //   5% big: 10-18 blots then hazard (rare jackpot vibe)
-  //   2% home run: 3-8 blots, no hazard (squid escapes)
-  let nBlots: number;
-  let tailValueBoost = 1;
-  if (roll < 0.45) {
-    nBlots = rng() < 0.5 ? 0 : 1;
-  } else if (roll < 0.75) {
-    nBlots = 2 + Math.floor(rng() * 3);
-  } else if (roll < 0.93) {
-    nBlots = 5 + Math.floor(rng() * 6);
-    tailValueBoost = 1.2;
-  } else if (roll < 0.98) {
-    nBlots = 10 + Math.floor(rng() * 9);
-    tailValueBoost = 1.6;
-  } else {
-    nBlots = 3 + Math.floor(rng() * 6);
-    tailValueBoost = 2.5;
-  }
-
-  const values: number[] = [];
-  for (let i = 0; i < nBlots; i++) {
-    // Individual blot value: mostly small (0.1-0.5x), sometimes mid
-    // (0.5-1.5x), rarely a bomb (2-6x). Final blot biased larger on
-    // longer runs for satisfying crescendo.
-    const v = rng();
-    const isFinal = i === nBlots - 1;
-    let base: number;
-    if (v < 0.55) base = 100 + rng() * 400;
-    else if (v < 0.88) base = 500 + rng() * 1000;
-    else base = 2000 + rng() * 4000;
-    if (isFinal && nBlots >= 5) base *= 1.4;
-    values.push(base * tailValueBoost);
-  }
-  return values;
+function rollBlotValue(rng: () => number, isFinal: boolean, longRun: boolean): number {
+  // Individual blot value in raw units. Normalization at the end
+  // rescales. Mostly small, occasional mid, rarely a bomb. Final blot
+  // on long clean runs gets a crescendo boost for satisfying big wins.
+  const v = rng();
+  let base: number;
+  if (v < 0.55) base = 100 + rng() * 400;
+  else if (v < 0.88) base = 500 + rng() * 1000;
+  else base = 2000 + rng() * 4000;
+  if (isFinal && longRun) base *= 1.5;
+  return base;
 }
 
-function normalizeDataset(raw: number[][]): number[][] {
-  const sums = raw.map((r) => r.reduce((a, b) => a + b, 0));
+type RawSequence = { blotsBeforeHazard: number[]; hazardAt: number | null; totalBlots: number };
+
+function generateRawSequence(rng: () => number): RawSequence {
+  const hasHazard = rng() < HAZARD_SEQUENCE_FRACTION;
+
+  // Runway length — total number of blot positions along the arc.
+  const shapeRoll = rng();
+  let totalBlots: number;
+  if (shapeRoll < 0.4) totalBlots = 1 + Math.floor(rng() * 3);        // short 1-3
+  else if (shapeRoll < 0.78) totalBlots = 3 + Math.floor(rng() * 5);  // mid 3-7
+  else if (shapeRoll < 0.95) totalBlots = 7 + Math.floor(rng() * 7);  // long 7-13
+  else totalBlots = 13 + Math.floor(rng() * 9);                        // epic 13-21
+
+  // Hazard position — biased to fire earlier so losses dominate
+  // dramatically. Uniform^2 distribution over 0..totalBlots (0 = hazard
+  // fires before any blot; totalBlots = hazard after all blots, clean).
+  let hazardAt: number | null = null;
+  if (hasHazard) {
+    const u = rng();
+    hazardAt = Math.floor(u * u * (totalBlots + 1));
+    if (hazardAt > totalBlots) hazardAt = totalBlots;
+  }
+
+  const collectableCount = hazardAt === null ? totalBlots : hazardAt;
+  const longRun = collectableCount >= 5 && hazardAt === null;
+
+  const values: number[] = [];
+  for (let i = 0; i < collectableCount; i++) {
+    const isFinal = i === collectableCount - 1;
+    values.push(rollBlotValue(rng, isFinal, longRun));
+  }
+
+  return { blotsBeforeHazard: values, hazardAt, totalBlots };
+}
+
+function normalizeDataset(raw: RawSequence[]): RawSequence[] {
+  // Each sequence's payout is sum of its blots. Scale all values so
+  // the mean over the whole dataset lands on TARGET_MEAN_BPS.
+  const sums = raw.map((r) => r.blotsBeforeHazard.reduce((a, b) => a + b, 0));
   const totalSum = sums.reduce((a, b) => a + b, 0);
   const targetSum = DATASET_SIZE * TARGET_MEAN_BPS;
   const factor = targetSum / Math.max(1, totalSum);
-  const scaled = raw.map((r) => r.map((v) => Math.round(v * factor)));
-  // Fix rounding drift by adjusting the first blot of the first non-empty row
-  let current = scaled.reduce((a, r) => a + r.reduce((x, y) => x + y, 0), 0);
+  const scaled = raw.map((r) => ({
+    ...r,
+    blotsBeforeHazard: r.blotsBeforeHazard.map((v) => Math.round(v * factor)),
+  }));
+  // Fix rounding drift so the mean is exactly the target.
+  let current = scaled.reduce((a, r) => a + r.blotsBeforeHazard.reduce((x, y) => x + y, 0), 0);
   let drift = targetSum - current;
-  for (let i = 0; drift !== 0 && i < DATASET_SIZE * 2; i++) {
+  for (let i = 0; drift !== 0 && i < DATASET_SIZE * 4; i++) {
     const row = scaled[i % DATASET_SIZE];
-    if (row.length === 0) continue;
+    if (row.blotsBeforeHazard.length === 0) continue;
     const step = drift > 0 ? 1 : -1;
-    if (row[0] + step >= 0) {
-      row[0] += step;
+    if (row.blotsBeforeHazard[0] + step >= 0) {
+      row.blotsBeforeHazard[0] += step;
       drift -= step;
     }
   }
@@ -96,21 +114,41 @@ function normalizeDataset(raw: number[][]): number[][] {
 
 function buildDataset(): CannonEvent[][] {
   const rng = mulberry32(0xb107a17c);
-  const raw: number[][] = [];
+  const raw: RawSequence[] = [];
   for (let i = 0; i < DATASET_SIZE; i++) raw.push(generateRawSequence(rng));
   const normalized = normalizeDataset(raw);
 
-  // 2% of rows are "home runs" that end without a hazard. Recomputing
-  // by total value puts the largest summed rows in that bucket so
-  // the UI reads as "the bigger the run, the more likely it escapes".
-  const sums = normalized.map((r, i) => ({ i, total: r.reduce((a, b) => a + b, 0) }));
-  sums.sort((a, b) => b.total - a.total);
-  const homeRunIndexes = new Set(sums.slice(0, Math.max(1, Math.round(DATASET_SIZE * 0.02))).map((s) => s.i));
-
   const dataset: CannonEvent[][] = [];
-  for (let i = 0; i < DATASET_SIZE; i++) {
-    const events: CannonEvent[] = normalized[i].map((v) => ({ kind: "blot" as const, value: v }));
-    if (!homeRunIndexes.has(i)) events.push({ kind: "hazard" as const });
+  for (const seq of normalized) {
+    const events: CannonEvent[] = [];
+    const totalBlots = seq.totalBlots;
+    const hazardAt = seq.hazardAt;
+
+    // Build the full event stream: blots at positions 0..hazardAt-1 are
+    // the ones the player collects, positions hazardAt..totalBlots-1
+    // are "ghost" blots the player never reaches because the hazard
+    // intervened. We still emit the ghost blots (with dummy value 0)
+    // so rendering has a complete path to lay out visually.
+    let collectedIdx = 0;
+    const collectablePayouts = seq.blotsBeforeHazard;
+    for (let i = 0; i < totalBlots; i++) {
+      if (hazardAt !== null && i === hazardAt) {
+        events.push({ kind: "hazard" });
+        // Remaining positions are ghosts (zero-value blots, won't add
+        // to payout since hazard already fired — but kept so the
+        // visual trajectory still feels full).
+        for (let j = i; j < totalBlots; j++) {
+          events.push({ kind: "blot", value: 0 });
+        }
+        break;
+      }
+      events.push({ kind: "blot", value: collectablePayouts[collectedIdx++] });
+    }
+    // No hazard inserted mid-sequence: either hazard at end or no hazard.
+    if (hazardAt === totalBlots) {
+      events.push({ kind: "hazard" });
+    }
+
     dataset.push(events);
   }
   return Object.freeze(dataset.map((s) => Object.freeze(s))) as unknown as CannonEvent[][];
@@ -118,14 +156,29 @@ function buildDataset(): CannonEvent[][] {
 
 export const CANNON_DATASET: readonly (readonly CannonEvent[])[] = buildDataset();
 
+// Payout of a sequence: sum of blot values BEFORE the first hazard.
+// Matches server-side settlement logic — don't credit anything past
+// the first hazard event.
 export function totalMultiplierBps(events: readonly CannonEvent[]): number {
   let sum = 0;
-  for (const e of events) if (e.kind === "blot") sum += e.value;
+  for (const e of events) {
+    if (e.kind === "hazard") return sum;
+    sum += e.value;
+  }
   return sum;
 }
 
+// Position of the hazard in the event list (or null if the sequence
+// ends without hitting one). Clients use this to know where to stop
+// the squid's physics — the flight ends at the hazard's trajectory t.
+export function hazardIndex(events: readonly CannonEvent[]): number | null {
+  for (let i = 0; i < events.length; i++) {
+    if (events[i].kind === "hazard") return i;
+  }
+  return null;
+}
+
 export function datasetHash(): number {
-  // Cheap FNV-1a over the flattened event stream.
   let h = 0x811c9dc5;
   for (const seq of CANNON_DATASET) {
     h = Math.imul(h ^ seq.length, 0x01000193) >>> 0;

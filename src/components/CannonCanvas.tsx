@@ -143,23 +143,48 @@ export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate
 
   const traj = useMemo(() => computeTrajectory(angleDeg, events), [angleDeg, events]);
 
-  const blotPlan = useMemo(() => {
-    if (!events) return [] as Array<{ t: number; worldX: number; worldY: number; value: number }>;
-    const blots = events.filter((e) => e.kind === "blot") as Array<{ kind: "blot"; value: number }>;
-    const total = blots.length;
-    return blots.map((b, i) => {
-      const t = ((i + 1) / (total + 1)) * traj.durationSec;
+  // Lay every event (blots + hazard) out along the arc at evenly-
+  // spaced t positions. The hazard is no longer assumed to be terminal —
+  // if it fires mid-sequence, the squid crashes at that t.
+  const eventPlan = useMemo(() => {
+    if (!events) {
+      return { blots: [] as Array<{ t: number; worldX: number; worldY: number; value: number; index: number; ghost: boolean }>, hazard: null as null | { t: number; worldX: number; worldY: number; index: number } };
+    }
+    const totalSlots = events.length;
+    let hazardIdx: number | null = null;
+    for (let i = 0; i < events.length; i++) {
+      if (events[i].kind === "hazard") {
+        hazardIdx = i;
+        break;
+      }
+    }
+    const blots: Array<{ t: number; worldX: number; worldY: number; value: number; index: number; ghost: boolean }> = [];
+    let hazard: null | { t: number; worldX: number; worldY: number; index: number } = null;
+    for (let i = 0; i < events.length; i++) {
+      const t = ((i + 1) / (totalSlots + 1)) * traj.durationSec;
       const [x, y] = posAtT(traj, t);
-      return { t, worldX: x, worldY: y, value: b.value };
-    });
+      const e = events[i];
+      if (e.kind === "blot") {
+        blots.push({
+          t,
+          worldX: x,
+          worldY: y,
+          value: e.value,
+          index: i,
+          // A blot past the hazard is a ghost — visible but never hit,
+          // never adds to payout. Kept on the path so the arc still
+          // looks populated.
+          ghost: hazardIdx !== null && i > hazardIdx,
+        });
+      } else {
+        hazard = { t, worldX: x, worldY: Math.min(y, GROUND_Y - 20), index: i };
+      }
+    }
+    return { blots, hazard };
   }, [events, traj]);
 
-  const hazardPos = useMemo(() => {
-    if (!hasHazard(events)) return null;
-    const [x, y] = posAtT(traj, traj.durationSec);
-    // Nudge hazard slightly off the ground so the squid collides mid-air
-    return { x, y: Math.min(y, GROUND_Y - 20) };
-  }, [events, traj]);
+  const blotPlan = eventPlan.blots;
+  const hazardPos = eventPlan.hazard;
 
   // Reset per-run state.
   useEffect(() => {
@@ -226,42 +251,51 @@ export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate
       let sy = traj.startY - 10;
       let rot = -((angleDeg * Math.PI) / 180) + Math.PI / 2;
       let speed = 0;
+      // Squid physics end time — flight stops at hazard t (if any) or
+      // at the full trajectory duration.
+      const flightEndT = hazardPos ? hazardPos.t : traj.durationSec;
+
       if (events && animating) {
         if (startRef.current === 0) startRef.current = now;
         const elapsed = (now - startRef.current) / 1000;
-        const t = Math.min(traj.durationSec, elapsed);
+        const t = Math.min(flightEndT, elapsed);
         const [x, y] = posAtT(traj, t);
         sx = x;
         sy = Math.min(y, GROUND_Y - 4);
         const dtEps = 0.016;
-        const [x2, y2] = posAtT(traj, Math.min(traj.durationSec, t + dtEps));
+        const [x2, y2] = posAtT(traj, Math.min(flightEndT, t + dtEps));
         rot = Math.atan2(y2 - y, Math.max(1, x2 - x));
         speed = Math.hypot(x2 - x, y2 - y) / dtEps;
 
-        // Collect blots at their scheduled time
+        // Collect only non-ghost blots, and only those whose t is
+        // before or equal to the hazard (since ghost blots are beyond
+        // the death point and unreachable).
         for (let i = 0; i < blotPlan.length; i++) {
           if (hitSetRef.current.has(i)) continue;
-          if (elapsed >= blotPlan[i].t) {
+          const b = blotPlan[i];
+          if (b.ghost) continue;
+          if (elapsed >= b.t) {
             hitSetRef.current.add(i);
-            accumulatedBpsRef.current += blotPlan[i].value;
+            accumulatedBpsRef.current += b.value;
             if (onMultiplierUpdate) onMultiplierUpdate(accumulatedBpsRef.current);
             splashesRef.current.push({
-              x: blotPlan[i].worldX,
-              y: blotPlan[i].worldY,
+              x: b.worldX,
+              y: b.worldY,
               age: 0,
-              color: blotPlan[i].value > 3000 ? "#ffc24a" : blotPlan[i].value > 1000 ? "#c986ff" : "#5fd8ff",
+              color: b.value > 3000 ? "#ffc24a" : b.value > 1000 ? "#c986ff" : "#5fd8ff",
             });
           }
         }
 
-        if (elapsed >= traj.durationSec + LINGER_SECONDS && !doneRef.current) {
+        if (elapsed >= flightEndT + LINGER_SECONDS && !doneRef.current) {
           doneRef.current = true;
           startRef.current = 0;
           onAnimDone();
         }
       } else if (events && !animating) {
-        // Settled pose — squid at landing point
-        const [x, y] = posAtT(traj, traj.durationSec);
+        // Settled pose — squid at its final landing (hazard spot if it
+        // died, else trajectory end).
+        const [x, y] = posAtT(traj, flightEndT);
         sx = x; sy = Math.min(y, GROUND_Y - 4); rot = 0.6;
       }
 
@@ -349,6 +383,12 @@ export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate
           const screenY = b.worldY - 22 - Math.sin(frame * 0.1 + i) * 3;
           if (screenX < -40 || screenX > W + 40) continue;
           const size = 8 + Math.min(12, b.value / 400);
+          // Ghost blots (past the hazard) are muted — visible as
+          // "what could have been" but never collectable.
+          if (b.ghost) {
+            ctx.save();
+            ctx.globalAlpha = 0.25;
+          }
           const color = b.value > 3000 ? "#ffc24a" : b.value > 1000 ? "#c986ff" : "#5fd8ff";
           // Halo glow
           const halo = ctx.createRadialGradient(screenX, screenY, 2, screenX, screenY, size * 2.4);
@@ -376,13 +416,17 @@ export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate
           ctx.ellipse(-size * 0.3, -size * 0.3, size * 0.22, size * 0.38, -0.3, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
+          if (b.ghost) ctx.restore();
         }
 
-        // Hazard (anglerfish) at the end of the trajectory
+        // Hazard — placed at whichever trajectory position the event
+        // sequence locked in (can be mid-flight, not just terminal).
+        // Rendered as a jagged underwater rock spike, the thing the
+        // squid slams into and zeroes out on.
         if (hazardPos) {
-          const hx = hazardPos.x - camX;
-          const hy = hazardPos.y;
-          if (hx > -60 && hx < W + 60) drawAnglerfish(ctx, hx, hy, now);
+          const hx = hazardPos.worldX - camX;
+          const hy = hazardPos.worldY;
+          if (hx > -60 && hx < W + 60) drawRock(ctx, hx, hy, now);
         }
       }
 
@@ -417,13 +461,8 @@ export function CannonCanvas({ events, animating, onAnimDone, onMultiplierUpdate
         frame,
       });
 
-      // ---------- Preview arc (idle state, shows where shot will go) ----------
-      if (events === null || (events && !animating && !hasHazard(events))) {
-        // Only show preview when idle OR on a successful run's rest pose
-      }
-      if (!events && !animating) {
-        drawPreviewArc(ctx, traj, now, camX);
-      }
+      // Preview arc deliberately removed — Moonsheep doesn't show
+      // where the shot lands; the mystery is part of the draw.
 
       raf = requestAnimationFrame(draw);
     };
@@ -492,61 +531,56 @@ function drawCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY: number,
   ctx.restore();
 }
 
-function drawPreviewArc(ctx: CanvasRenderingContext2D, traj: Traj, now: number, camX: number) {
-  const steps = 30;
-  const phase = (now / 60) % 1;
-  ctx.fillStyle = "rgba(255, 240, 160, 0.55)";
-  for (let i = 0; i < steps; i++) {
-    const t = ((i + phase) / steps) * traj.durationSec;
-    const [x, y] = posAtT(traj, t);
-    const screenX = x - camX;
-    if (screenX < -4 || screenX > W + 4) continue;
-    ctx.beginPath();
-    ctx.arc(screenX, y, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-function drawAnglerfish(ctx: CanvasRenderingContext2D, x: number, y: number, now: number) {
+// Jagged underwater rock spike — the "you died on a rock" obstacle.
+// Drawn with a dark stone gradient + glowing barnacle accents so it
+// reads as menacing, not just clutter.
+function drawRock(ctx: CanvasRenderingContext2D, x: number, y: number, now: number) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.fillStyle = "#0a1530";
+  // Base stone body
+  const grd = ctx.createLinearGradient(0, -28, 0, 18);
+  grd.addColorStop(0, "#3a3040");
+  grd.addColorStop(0.6, "#1d1822");
+  grd.addColorStop(1, "#0a0810");
+  ctx.fillStyle = grd;
   ctx.beginPath();
-  ctx.ellipse(0, 0, 28, 20, 0, 0, Math.PI * 2);
+  ctx.moveTo(-20, 18);
+  ctx.lineTo(-14, -6);
+  ctx.lineTo(-6, 0);
+  ctx.lineTo(-2, -22);
+  ctx.lineTo(5, -10);
+  ctx.lineTo(10, -28);
+  ctx.lineTo(16, -8);
+  ctx.lineTo(22, 4);
+  ctx.lineTo(20, 18);
+  ctx.closePath();
   ctx.fill();
-  // Jagged teeth
-  ctx.fillStyle = "#fff";
-  for (let i = 0; i < 6; i++) {
-    ctx.beginPath();
-    ctx.moveTo(-24 + i * 7, 2);
-    ctx.lineTo(-21 + i * 7, 8);
-    ctx.lineTo(-18 + i * 7, 2);
-    ctx.closePath();
-    ctx.fill();
-  }
-  // Eye
-  ctx.fillStyle = "#fff";
-  ctx.beginPath(); ctx.arc(-4, -4, 3, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#000";
-  ctx.beginPath(); ctx.arc(-3.5, -4, 1.6, 0, Math.PI * 2); ctx.fill();
-  // Lure
-  const lureX = -30 + Math.sin(now / 300) * 3;
-  const lureY = -20 + Math.cos(now / 300) * 3;
-  ctx.strokeStyle = "#555"; ctx.lineWidth = 1;
+  // Lower shadow
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
   ctx.beginPath();
-  ctx.moveTo(-22, -8);
-  ctx.quadraticCurveTo(-28, -16, lureX, lureY);
+  ctx.ellipse(2, 20, 22, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Glowing barnacles / crystals so the rock feels alive
+  const pulse = 0.6 + Math.sin(now / 300) * 0.4;
+  ctx.fillStyle = `rgba(255, 130, 180, ${0.55 + pulse * 0.2})`;
+  ctx.beginPath();
+  ctx.arc(-8, -4, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(6, -14, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = `rgba(110, 220, 255, ${0.45 + pulse * 0.25})`;
+  ctx.beginPath();
+  ctx.arc(14, -2, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  // Jagged outline highlights
+  ctx.strokeStyle = "rgba(200, 180, 220, 0.35)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-14, -6);
+  ctx.lineTo(-2, -22);
+  ctx.lineTo(10, -28);
+  ctx.lineTo(16, -8);
   ctx.stroke();
-  const lureGrad = ctx.createRadialGradient(lureX, lureY, 1, lureX, lureY, 12);
-  lureGrad.addColorStop(0, "#fff8c0");
-  lureGrad.addColorStop(1, "rgba(255,230,100,0)");
-  ctx.fillStyle = lureGrad;
-  ctx.beginPath();
-  ctx.arc(lureX, lureY, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#ffe060";
-  ctx.beginPath();
-  ctx.arc(lureX, lureY, 2.8, 0, Math.PI * 2);
-  ctx.fill();
   ctx.restore();
 }
