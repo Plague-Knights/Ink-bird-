@@ -485,7 +485,7 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   image-rendering: pixelated;
   image-rendering: -moz-crisp-edges;
   image-rendering: crisp-edges;
-  aspect-ratio: 120 / 140;
+  aspect-ratio: 120 / 170;
 }
 
 .tier-row {

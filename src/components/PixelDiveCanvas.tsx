@@ -9,7 +9,8 @@ import { useEffect, useRef } from "react";
 // painted color grid and the ocean is dithered procedurally.
 
 const SCENE_W = 120;   // internal logical width (pixels)
-const SCENE_H = 140;   // internal logical height (pixels)
+const SCENE_H = 170;   // internal logical height (pixels) — tall enough
+                       // to fit a 42px squid at max depth with margin.
 const MAX_DEPTH_M = 1000;
 
 type Props = {
@@ -18,7 +19,7 @@ type Props = {
   onAnimDone: () => void;
 };
 
-// Color palette (iridescent squid vibes)
+// Color palette — 5-ramp iridescent squid + ocean + accents.
 const P = {
   skyTop: "#1a3760",
   skyBot: "#2d6aa3",
@@ -27,151 +28,206 @@ const P = {
   sea2: "#061f4a",
   sea3: "#010720",
   sea4: "#000309",
-  mantleHi: "#e3d5ff",
-  mantleMid: "#9f7cff",
-  mantleLo: "#6b53c7",
+  // 5 shades of the mantle gradient, lightest to darkest
+  mHi2: "#f5eaff",
+  mHi1: "#cbb5ff",
+  mMid: "#8a6cef",
+  mLo1: "#5a3fba",
+  mLo2: "#2f1f6e",
+  // Fins / bioluminescent highlights
+  finHi: "#a8ecff",
   fin: "#5fd8ff",
-  finLo: "#3a96b5",
-  tent: "#7a5fd6",
-  tentHi: "#b196ff",
-  tentLo: "#4d3a94",
+  finLo: "#2a8fb0",
+  // Tentacles (slightly warmer than mantle)
+  tHi: "#c7aaff",
+  t: "#8a6cef",
+  tLo: "#4d3a94",
+  tXlo: "#241659",
+  // Eye
   eye: "#021629",
   eyeIris: "#5fd8ff",
   eyeShine: "#ffffff",
+  // Scene
   bubble: "#d0eaff",
+  bubbleHi: "#ffffff",
   godray: "#a8d8ff",
   depthText: "#78b4d0",
 } as const;
 
-// Hand-painted squid, 24x34, indexed palette. Characters map to colors.
-// Mantle pointing UP, tentacles hanging DOWN. Drawn in "idle" pose; we
-// animate the tentacle rows by cycling through a few hand-painted
-// frames below.
+// Hand-painted squid, 32x42, 5-ramp indexed palette. Characters map to
+// colors. Mantle pointing UP, tentacles hanging DOWN. Three animation
+// frames cycled at ~180ms for a slow undulating idle.
 //
 // . = transparent
-// h = mantle hi / sheen
+// H = mantle hi (lightest, sheen)
+// h = mantle highlight
 // m = mantle mid
-// l = mantle lo
-// f = fin
-// F = fin lo (shadow)
+// l = mantle low
+// L = mantle darkest (bottom shadow)
+// F = fin highlight
+// f = fin mid
+// j = fin shadow
+// T = tentacle highlight (outer arms)
 // t = tentacle mid
-// T = tentacle hi (outer feeding arms)
-// d = tentacle lo (shadow)
-// e = eye
-// i = eye iris
-// s = eye shine
+// d = tentacle shadow
+// D = tentacle darkest
+// e = eye black
+// i = eye iris cyan
+// s = eye shine white
+// * = bioluminescent spot
 const SQUID_IDLE = [
-  "............mm..........",
-  "..........mmmmmm........",
-  ".........mmmmmmmm.......",
-  "........hmmmmmmmml......",
-  ".......hhmmmmmmmmll.....",
-  "......fhhmmmmmmmmllF....",
-  ".....ffhhmmmmmmmmllFF...",
-  "....fffhhmmmmmmmmmllFF..",
-  "....ffhmmmmmmmmmmmmllF..",
-  "....fhmmmmmmmmmmmmmmlF..",
-  "....hmmmmmmmmmmmmmmmmm..",
-  "....mmmmmmmmmmmmmmmmmmm.",
-  "....mmmmmeiiemmmmmmmmmm.",
-  "....mmmmeiiseemmmmmmmmm.",
-  "....mmmmeiiiiemmmmmmmmm.",
-  "....mmmmeeiiemmmmmmmmmm.",
-  "....mmmmmmeemmmmmmmmmmm.",
-  "....mmmmmmmmmmmmmmmmmm..",
-  "....lmmmmmmmmmmmmmmmll..",
-  "....lllmmmmmmmmmmmlllll.",
-  "....TddtdtdtdtdtdtdtTT..",
-  "....TddtdtdtdtdtdtdtT...",
-  ".....Tdtdtdtdtdtdtd.....",
-  ".....Ttdtdtdtdtdt.......",
-  "......Tdtdtdtdt.........",
-  "......Tdtdtdt...........",
-  "......Td.tdt............",
-  "......T..dt.............",
-  ".....T....t.............",
-  ".....T..................",
+  "...............HH...............",
+  "..............HhhH..............",
+  ".............HhmmhH.............",
+  "............HhmmmmhH............",
+  "...........HhmmmmmmhH...........",
+  "..........HhmmmmmmmmhH..........",
+  ".........fhhmmmmmmmmhhl.........",
+  "........ffhhmmmmmmmmmmhll.......",
+  ".......Fffhhmmmmmmmmmmmll.......",
+  "......FFfhhmmmm*mmmmmmmmll......",
+  "......FfhhmmmmmmmmmmmmmmlL......",
+  ".....FfhhmmmmmmmmmmmmmmmmlL.....",
+  ".....FhhmmmmmmmmmmmmmmmmmlL.....",
+  ".....hhmmmmmmmmmmmmmmmmmmlL.....",
+  ".....hmmmmeiiiemmmmmmmm*mlL.....",
+  ".....hmmmeiiisemmmmmmmmmmlL.....",
+  ".....hmmmeiiisemmmmmmmmmmlL.....",
+  ".....mmmmeiiiemmmmmmmmmmmll.....",
+  ".....mmmmmeeemmmmmmmmmmmmll.....",
+  "....jmmmmmmmmmmmmmmmmmmmmllj....",
+  "....jmmmmmmmmmmmmmmmmmmmmlljj...",
+  "...jjlmmmmmmmmmmmmmmmmmmmlllj...",
+  "...jjlllmmmmmmmmmmmmmmmmllllLj..",
+  "...jjlllllmmmmmmmmmmmllllllLLj..",
+  "....jllLLllllllllllllLLLLLLj....",
+  "....TddttdttdttdttdttdttdTT.....",
+  "....TddttdttdttdttdttdttT.......",
+  "....TddtdttdttdttdttdtT.........",
+  ".....Tdttdttdttdttdtd...........",
+  "......Tdttdttdttdttd............",
+  ".......Tdtdttdttdtd.............",
+  "........Tdttdttdt...............",
+  ".........Tdtdttd................",
+  "..........Tdtdt.................",
+  "...........Tdt..................",
+  "............Tt..................",
+  "............T...................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 const SQUID_SWAY = [
-  "............mm..........",
-  "..........mmmmmm........",
-  ".........mmmmmmmm.......",
-  "........hmmmmmmmml......",
-  ".......hhmmmmmmmmll.....",
-  "......fhhmmmmmmmmllF....",
-  ".....ffhhmmmmmmmmllFF...",
-  "....fffhhmmmmmmmmmllFF..",
-  "....ffhmmmmmmmmmmmmllF..",
-  "....fhmmmmmmmmmmmmmmlF..",
-  "....hmmmmmmmmmmmmmmmmm..",
-  "....mmmmmmmmmmmmmmmmmmm.",
-  "....mmmmmeiiemmmmmmmmmm.",
-  "....mmmmeiiseemmmmmmmmm.",
-  "....mmmmeiiiiemmmmmmmmm.",
-  "....mmmmeeiiemmmmmmmmmm.",
-  "....mmmmmmeemmmmmmmmmmm.",
-  "....mmmmmmmmmmmmmmmmmm..",
-  "....lmmmmmmmmmmmmmmmll..",
-  "....lllmmmmmmmmmmmlllll.",
-  "...TdtdtdtdtdtdtdtdTT...",
-  "...TdtdtdtdtdtdtdtdT....",
-  "...Tdtdtdtdtdtdtdt......",
-  "....tdtdtdtdtdtdt.......",
-  ".....dtdtdtdtdt.........",
-  ".....tdtdtdt............",
-  ".....tdtdt..............",
-  ".....tdt................",
-  "....T.t.................",
-  "...T....................",
+  "...............HH...............",
+  "..............HhhH..............",
+  ".............HhmmhH.............",
+  "............HhmmmmhH............",
+  "...........HhmmmmmmhH...........",
+  "..........HhmmmmmmmmhH..........",
+  ".........fhhmmmmmmmmhhl.........",
+  "........ffhhmmmmmmmmmmhll.......",
+  ".......Fffhhmmmmmmmmmmmll.......",
+  "......FFfhhmmmm*mmmmmmmmll......",
+  "......FfhhmmmmmmmmmmmmmmlL......",
+  ".....FfhhmmmmmmmmmmmmmmmmlL.....",
+  ".....FhhmmmmmmmmmmmmmmmmmlL.....",
+  ".....hhmmmmmmmmmmmmmmmmmmlL.....",
+  ".....hmmmmeiiiemmmmmmmm*mlL.....",
+  ".....hmmmeiiisemmmmmmmmmmlL.....",
+  ".....hmmmeiiisemmmmmmmmmmlL.....",
+  ".....mmmmeiiiemmmmmmmmmmmll.....",
+  ".....mmmmmeeemmmmmmmmmmmmll.....",
+  "....jmmmmmmmmmmmmmmmmmmmmllj....",
+  "....jmmmmmmmmmmmmmmmmmmmmlljj...",
+  "...jjlmmmmmmmmmmmmmmmmmmmlllj...",
+  "...jjlllmmmmmmmmmmmmmmmmllllLj..",
+  "...jjlllllmmmmmmmmmmmllllllLLj..",
+  "....jllLLllllllllllllLLLLLLj....",
+  "...TddttdttdttdttdttdttdttTT....",
+  "...TddttdttdttdttdttdttdttT.....",
+  "...Tddtdttdttdttdttdttdt........",
+  "....Tdttdttdttdttdttdt..........",
+  ".....Tdttdttdttdttdt............",
+  "......Tdtdttdttdttd.............",
+  "......Tdttdttdt.................",
+  ".....T.Tdtdttd..................",
+  "....T...Tdtdt...................",
+  "...T.....Tdt....................",
+  "..T.......Tt....................",
+  ".T........T.....................",
+  "T...............................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 const SQUID_PROPEL = [
-  "............mm..........",
-  "..........mmmmmm........",
-  ".........mmmmmmmm.......",
-  "........hmmmmmmmml......",
-  ".......hhmmmmmmmmll.....",
-  "......fhhmmmmmmmmllF....",
-  ".....ffhhmmmmmmmmllFF...",
-  "....fffhhmmmmmmmmmllFF..",
-  "....ffhmmmmmmmmmmmmllF..",
-  "....fhmmmmmmmmmmmmmmlF..",
-  "....hmmmmmmmmmmmmmmmmm..",
-  "....mmmmmmmmmmmmmmmmmmm.",
-  "....mmmmmeiiemmmmmmmmmm.",
-  "....mmmmeiisemmmmmmmmmm.",
-  "....mmmmeiiiemmmmmmmmmm.",
-  "....mmmmeeiiemmmmmmmmmm.",
-  "....mmmmmmeemmmmmmmmmmm.",
-  "....mmmmmmmmmmmmmmmmmm..",
-  "....lmmmmmmmmmmmmmmmll..",
-  "....lllmmmmmmmmmmmlllll.",
-  ".....TdtdtdtdtdtdtdT....",
-  "......TdtdtdtdtdtdT.....",
-  "......tdtdtdtdtdt.......",
-  ".......dtdtdtdtd........",
-  ".......tdtdtdt..........",
-  ".......dtdtd............",
-  "........tdt.............",
-  "........td..............",
-  "........t...............",
-  "........................",
+  "...............HH...............",
+  "..............HhhH..............",
+  ".............HhmmhH.............",
+  "............HhmmmmhH............",
+  "...........HhmmmmmmhH...........",
+  "..........HhmmmmmmmmhH..........",
+  ".........fhhmmmmmmmmhhl.........",
+  "........ffhhmmmmmmmmmmhll.......",
+  ".......Fffhhmmmmmmmmmmmll.......",
+  "......FFfhhmmmm*mmmmmmmmll......",
+  "......FfhhmmmmmmmmmmmmmmlL......",
+  ".....FfhhmmmmmmmmmmmmmmmmlL.....",
+  ".....FhhmmmmmmmmmmmmmmmmmlL.....",
+  ".....hhmmmmmmmmmmmmmmmmmmlL.....",
+  ".....hmmmmeiiiemmmmmmmm*mlL.....",
+  ".....hmmmeiiisemmmmmmmmmmlL.....",
+  ".....hmmmeiiisemmmmmmmmmmlL.....",
+  ".....mmmmeiiiemmmmmmmmmmmll.....",
+  ".....mmmmmeeemmmmmmmmmmmmll.....",
+  "....jmmmmmmmmmmmmmmmmmmmmllj....",
+  "....jmmmmmmmmmmmmmmmmmmmmlljj...",
+  "...jjlmmmmmmmmmmmmmmmmmmmlllj...",
+  "...jjlllmmmmmmmmmmmmmmmmllllLj..",
+  "...jjlllllmmmmmmmmmmmllllllLLj..",
+  "....jllLLllllllllllllLLLLLLj....",
+  ".....TdtdtdtdtdtdtdtdtdtT.......",
+  "......TdtdtdtdtdtdtdtdtT........",
+  "......Tdtdtdtdtdtdtdt...........",
+  ".......dtdtdtdtdtdt.............",
+  ".......tdtdtdtdtd...............",
+  ".......dtdtdtdt.................",
+  "........tdtdt...................",
+  "........dtd.....................",
+  ".........t......................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
 ];
 
 const FRAMES = [SQUID_IDLE, SQUID_SWAY, SQUID_PROPEL, SQUID_SWAY];
 
 function paletteColor(ch: string): string | null {
   switch (ch) {
-    case "h": return P.mantleHi;
-    case "m": return P.mantleMid;
-    case "l": return P.mantleLo;
+    case "H": return P.mHi2;
+    case "h": return P.mHi1;
+    case "m": return P.mMid;
+    case "l": return P.mLo1;
+    case "L": return P.mLo2;
+    case "F": return P.finHi;
     case "f": return P.fin;
-    case "F": return P.finLo;
-    case "t": return P.tent;
-    case "T": return P.tentHi;
-    case "d": return P.tentLo;
+    case "j": return P.finLo;
+    case "T": return P.tHi;
+    case "t": return P.t;
+    case "d": return P.tLo;
+    case "D": return P.tXlo;
     case "e": return P.eye;
     case "i": return P.eyeIris;
     case "s": return P.eyeShine;
+    case "*": return P.finHi;
     default: return null;
   }
 }
@@ -202,6 +258,7 @@ export function PixelDiveCanvas({ distance, animating, onAnimDone }: Props) {
   >([]);
   const flashRef = useRef<number>(0);
   const doneRef = useRef(false);
+  const lastRenderRef = useRef<number>(0);
 
   useEffect(() => {
     if (!bufferRef.current) {
@@ -286,7 +343,7 @@ export function PixelDiveCanvas({ distance, animating, onAnimDone }: Props) {
 
       // Depth labels on right edge, pixel-font rendered
       const markers = [100, 250, 500, 750, 1000];
-      const depthRange = SCENE_H - surfaceY - 10;
+      const depthRange = SCENE_H - surfaceY - 28; // bottom margin for sprite
       ctx.fillStyle = P.depthText;
       ctx.font = "6px monospace";
       ctx.textAlign = "right";
@@ -298,7 +355,7 @@ export function PixelDiveCanvas({ distance, animating, onAnimDone }: Props) {
 
       // Figure out where the squid is right now
       const cx = SCENE_W / 2;
-      const squidCX = Math.round(cx - 12); // sprite is 24 wide
+      const squidCX = Math.round(cx - 16); // sprite is 32 wide
       let squidY = surfaceY;
       let dispDepth = 0;
       if (distance != null) {
@@ -321,30 +378,55 @@ export function PixelDiveCanvas({ distance, animating, onAnimDone }: Props) {
         }
       }
 
-      // Bubble trail while diving
-      if (animating && now - (bubblesRef.current.at(-1)?.life ?? 0) > 40) {
+      // Bubble trail. Two emitters:
+      //  - Dive burst: quicker cadence while the squid is actively moving.
+      //  - Ambient: slow trickle from the whole scene even at rest, so
+      //    the ocean looks alive between rounds.
+      const lastBubbleAge = now - (bubblesRef.current.at(-1)?.life ?? 0);
+      if (animating && lastBubbleAge > 160) {
         bubblesRef.current.push({
-          x: cx + (Math.random() - 0.5) * 8,
-          y: squidY,
-          r: 1 + Math.random(),
-          vy: 0.3 + Math.random() * 0.4,
+          x: cx + (Math.random() - 0.5) * 10,
+          y: squidY + 4,
+          r: 1 + (Math.random() < 0.5 ? 0 : 1),
+          vy: 0.05 + Math.random() * 0.08,
+          life: now,
+        });
+      } else if (!animating && lastBubbleAge > 600) {
+        bubblesRef.current.push({
+          x: 4 + Math.random() * (SCENE_W - 8),
+          y: SCENE_H - 2,
+          r: Math.random() < 0.7 ? 1 : 2,
+          vy: 0.03 + Math.random() * 0.05,
           life: now,
         });
       }
+      // Advance + render bubbles. Converted to delta-time so the rate
+      // is frame-rate independent; using `now` deltas across frames.
+      const dt = lastRenderRef.current ? (now - lastRenderRef.current) / 16.67 : 1;
+      lastRenderRef.current = now;
       for (let i = bubblesRef.current.length - 1; i >= 0; i--) {
         const b = bubblesRef.current[i];
-        b.y -= b.vy;
-        if (b.y < surfaceY - 1 || now - b.life > 4000) {
+        b.y -= b.vy * dt;
+        b.x += Math.sin((now + i * 37) / 900) * 0.15 * dt;
+        if (b.y < surfaceY - 1 || now - b.life > 10000) {
           bubblesRef.current.splice(i, 1);
           continue;
         }
+        const size = Math.max(1, Math.round(b.r));
+        const bx = Math.round(b.x);
+        const by = Math.round(b.y);
         ctx.fillStyle = P.bubble;
-        ctx.fillRect(Math.round(b.x), Math.round(b.y), Math.max(1, Math.round(b.r)), Math.max(1, Math.round(b.r)));
+        ctx.fillRect(bx, by, size, size);
+        // Highlight pixel on 2x2+ bubbles for a glossy feel
+        if (size >= 2) {
+          ctx.fillStyle = P.bubbleHi;
+          ctx.fillRect(bx, by, 1, 1);
+        }
       }
 
-      // Squid sprite with frame cycling
-      const frameIdx = Math.floor(now / 160) % FRAMES.length;
-      drawSquid(ctx, FRAMES[frameIdx], squidCX, Math.round(squidY) - 12);
+      // Squid sprite with frame cycling. 250ms per frame = relaxed idle.
+      const frameIdx = Math.floor(now / 250) % FRAMES.length;
+      drawSquid(ctx, FRAMES[frameIdx], squidCX, Math.round(squidY) - 18);
 
       // Live depth chip while moving
       if (distance != null && animating) {
