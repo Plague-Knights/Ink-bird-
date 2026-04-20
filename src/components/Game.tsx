@@ -24,6 +24,11 @@ type GameProps = {
     inputs: SimInput[];
     claimedScore: number;
   }) => void;
+  // When true the scene skips the MENU screen on mount and dives
+  // straight into a paid run. Used by /launch so the cannon intro
+  // can hand off seamlessly into gameplay without the player having
+  // to tap "PLAY FOR PRIZES" a second time.
+  autoStart?: boolean;
 };
 
 type Particle = {
@@ -51,7 +56,7 @@ function medalFor(s: number) {
   return null;
 }
 
-export function Game({ canStart, onBeforeStart, onGameOver }: GameProps) {
+export function Game({ canStart, onBeforeStart, onGameOver, autoStart = false }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [ui, setUi] = useState<UiState>(UI_STATE.MENU);
   const [paused, setPaused] = useState(false);
@@ -126,6 +131,18 @@ export function Game({ canStart, onBeforeStart, onGameOver }: GameProps) {
       setStarting(false);
     }
   }, [canStart, onBeforeStart]);
+
+  // Fire startGame once on mount when autoStart is true and the scene
+  // is still in its MENU state. /launch uses this to skip the tap-to-
+  // play screen after the cannon intro.
+  const autoStartFiredRef = useRef(false);
+  useEffect(() => {
+    if (!autoStart || autoStartFiredRef.current) return;
+    if (!canStart) return;
+    if (uiRef.current !== UI_STATE.MENU) return;
+    autoStartFiredRef.current = true;
+    startGame();
+  }, [autoStart, canStart, startGame]);
 
   // Practice mode: no server handshake, no DB write, no leaderboard.
   // Free to play for anyone (even without wallet / attempts). Score is

@@ -151,6 +151,7 @@ export default function LaunchPage() {
                 canStart={true}
                 onBeforeStart={onBeforeStart}
                 onGameOver={onGameOver}
+                autoStart={true}
               />
             </div>
           ) : phase === "cannon" ? (
