@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { keccak256, formatEther, parseEther, toHex } from "viem";
 import { ConnectWallet } from "@/components/ConnectWallet";
-import { CannonCanvas } from "@/components/CannonCanvas";
+import { CannonScene } from "@/components/CannonScene";
 import { useAuth } from "@/lib/useSession";
 
 const ANGLE_MIN = 20;
@@ -172,10 +172,9 @@ export default function CannonPage() {
               </button>
             </div>
 
-            <CannonCanvas
+            <CannonScene
               events={pending?.events ?? result?.events ?? null}
               animating={animating}
-              angleDeg={angleDeg}
               onAnimDone={() => {
                 setAnimating(false);
                 if (pending) {

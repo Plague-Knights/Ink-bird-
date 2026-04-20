@@ -224,7 +224,7 @@ function Hazard({ events }: { events: readonly CannonEvent[] | null }) {
 }
 
 function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
-  const gltf = useGLTF("/models/squid.glb", true, true, withMeshopt);
+  const gltf = useGLTF("/models/squid-cannon.glb", true, true, withMeshopt);
   const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
   const group = useRef<THREE.Group>(null);
 
@@ -314,5 +314,5 @@ function Squid({ events, animating, onAnimDone, onMultiplierUpdate }: Props) {
   );
 }
 
-useGLTF.preload("/models/squid.glb", true, true, withMeshopt);
+useGLTF.preload("/models/squid-cannon.glb", true, true, withMeshopt);
 useGLTF.preload("/models/anglerfish.glb", true, true, withMeshopt);

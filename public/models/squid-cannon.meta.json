@@ -1,0 +1,10 @@
+{
+  "slug": "squid-cannon",
+  "prompt": "a stylized cephalopod squid in cannonball pose, mantle pointed forward like a torpedo, 8 tentacles swept back and trailing behind, 2 longer feeding arms streaming back, iridescent violet-to-cyan gradient body, glossy head, glowing cyan eye accents, action pose, low poly game asset",
+  "polycount": 12000,
+  "aiModel": "latest",
+  "previewTaskId": "019dacd6-f10a-7a55-a5c4-772a050c4fb5",
+  "refineTaskId": "019dacd7-c9c9-7980-8878-84cf38fbdbd8",
+  "glbUrl": "https://assets.meshy.ai/1b1c1bf6-500a-4e57-ac71-5ac404d2c99c/tasks/019dacd7-c9c9-7980-8878-84cf38fbdbd8/output/model.glb?Expires=4930243200&Signature=MllcVIkekOAWxZ~Jg2dqt2FvSAkHbtczNWWtCPYDmXEXbTBiR3lSPLIMg-1Xx9Zk1mGJHdm01ZbYJhjmS6tgdMrcWI4UEu6mlNb7tMaso~B-SJRgdDR7~nCh9NVj0V64RkF5iVXKrx3tFxLTJJcXn7--GN6tkZ7b4-Ewe699Yfh7vMW17FtPUG9Hg~093nsFjQd0NMHrXgz4g6ndIj1L9OfOLXC8cHC2Wk~oWyc0PUHfXjhcacY5UKThDkCeRaeOAJEr6zbOiYmqZCgOcQXEubr5cGMy3iD10pRAjMwI~V67f3~XYClFae74FOoABb9SQ6pg2S4MM8gWMo7KBjR34w__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "generatedAt": "2026-04-20T21:43:42.470Z"
+}
