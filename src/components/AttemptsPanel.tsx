@@ -7,6 +7,7 @@ import { useState } from "react";
 import { activeContracts } from "@/lib/chain";
 import { InkSquidArcadeAbi } from "@/config/abis/InkSquidArcade";
 import { useAttempts, useAuth } from "@/lib/useSession";
+import { BPS_DENOM, PLAYER_SHARE_BPS } from "@/lib/payouts";
 
 export function AttemptsPanel() {
   const { address } = useAccount();
@@ -41,7 +42,9 @@ export function AttemptsPanel() {
     });
   }, [packs, writeContract]);
 
-  const poolEth = pool ? formatEther((pool as readonly bigint[])[0]) : "0";
+  const poolWei = pool ? (pool as readonly bigint[])[0] : 0n;
+  const playerPoolWei = (poolWei * BigInt(PLAYER_SHARE_BPS)) / BigInt(BPS_DENOM);
+  const poolEth = formatEther(playerPoolWei);
 
   const remainingText = !signedIn
     ? "—"
