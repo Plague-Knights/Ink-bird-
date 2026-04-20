@@ -1,0 +1,10 @@
+{
+  "slug": "treasure",
+  "prompt": "A stylized cartoon sunken treasure chest, wooden planks with iron bands, slightly open revealing gold coin glow, low poly game asset, clean topology",
+  "polycount": 8000,
+  "aiModel": "latest",
+  "previewTaskId": "019dab0b-1403-7271-bc6d-505873e072bc",
+  "refineTaskId": "019dab0d-3224-72df-8e5c-f228797ed008",
+  "glbUrl": "https://assets.meshy.ai/1b1c1bf6-500a-4e57-ac71-5ac404d2c99c/tasks/019dab0d-3224-72df-8e5c-f228797ed008/output/model.glb?Expires=4930243200&Signature=HzoPyrO3XT3ptOipeCsQrwYH6POpfkiyRZiv4O-CH6JN~RTOiO2BMijfQeExbJrps4-bfqTPgHsy4vLC7n0Jme0J3zu14FMUR75mCka9y5n4y9harZZhjs~8hUQJeShm4LB2kZGIJBTnNQ0FgGqLGIu8qzTuef49KlWywi47duR-ODVzZ1YEvQrqdsxAqUjWHuhcL3-~eIPx9I~ut8UGAOvxZGrp-CCYbUiGj~kcW-K09jagS7ZASyeHI-RSXh62HsMHk4fiGbWRut-wZulqX0-UQUK4nbjGu6azh7hOolGH1xpJuQEnVjrgzV71GYd~PUb4oG3nk8PFg~PlJWTOUA__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "generatedAt": "2026-04-20T13:24:41.846Z"
+}

@@ -1,12 +1,22 @@
 "use client";
 
-import { Canvas, useFrame, useLoader } from "@react-three/fiber";
-import { Environment, useGLTF, Preload } from "@react-three/drei";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { useGLTF, Preload } from "@react-three/drei";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
 const MAX_DEPTH_M = 1000;
 const DEPTH_WORLD_PER_METER = 0.012; // 1000m -> ~12 world units of descent
+
+// All Meshy-generated GLBs are meshopt-compressed via gltf-transform, so
+// every GLTFLoader the scene uses must install the meshopt decoder first.
+// drei's useGLTF takes an extendLoader callback as its last argument to
+// do exactly this per-call. drei's ExtendLoader type narrows to its own
+// GLTFLoader variant, so we type-erase the argument here — the runtime
+// loader has setMeshoptDecoder regardless.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const withMeshopt = (loader: any) => loader.setMeshoptDecoder(MeshoptDecoder);
 
 type Props = {
   distance: number | null;
@@ -49,6 +59,15 @@ function SceneContents({ distance, animating, onAnimDone }: Props) {
       <Plankton count={180} />
       <Bubbles count={60} />
       <DepthMarkers />
+      {/* Drifting ambient decor. Positions are tuned so the creatures
+          sit at believable depths relative to the squid's 1.5..−10.5
+          world Y range (surface to abyss). */}
+      <DriftingJellyfish position={[-1.4, -1.2, -0.4]} scale={0.2} phase={0} />
+      <DriftingJellyfish position={[1.6, -3.8, -1.0]} scale={0.16} phase={1.4} />
+      <DriftingJellyfish position={[-0.5, -6.5, -0.6]} scale={0.24} phase={2.6} />
+      <Anglerfish position={[1.2, -7.5, -0.8]} />
+      <CoralBed />
+      <TreasureChest distance={distance} />
       <Squid distance={distance} animating={animating} onAnimDone={onAnimDone} />
     </>
   );
@@ -308,9 +327,130 @@ function Squid({ distance, animating, onAnimDone }: Props) {
 // when we've confirmed the asset exists so a missing model doesn't
 // suspend the whole tree indefinitely.
 function SquidModel() {
-  const { scene } = useGLTF("/models/squid.glb");
-  const cloned = useMemo(() => scene.clone(true), [scene]);
-  return <primitive object={cloned} scale={0.45} />;
+  const gltf = useGLTF("/models/squid.glb", true, true, withMeshopt);
+  const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  return <primitive object={cloned} scale={0.35} rotation={[0, Math.PI, 0]} />;
+}
+
+// Ambient background jellyfish. Drifts slowly on Y with a gentle bob,
+// hidden behind the squid on the depth axis so it reads as scene depth,
+// not a collision target.
+function DriftingJellyfish({
+  position,
+  scale = 0.2,
+  phase = 0,
+}: {
+  position: [number, number, number];
+  scale?: number;
+  phase?: number;
+}) {
+  const group = useRef<THREE.Group>(null);
+  const gltf = useGLTF("/models/jellyfish.glb", true, true, withMeshopt);
+  const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+
+  useFrame(({ clock }) => {
+    if (!group.current) return;
+    const t = clock.elapsedTime + phase;
+    group.current.position.y = position[1] + Math.sin(t * 0.4) * 0.3;
+    group.current.position.x = position[0] + Math.sin(t * 0.25) * 0.1;
+    group.current.rotation.y = Math.sin(t * 0.3) * 0.25;
+    // Subtle breathing pulse
+    const s = scale * (1 + Math.sin(t * 1.2) * 0.04);
+    group.current.scale.setScalar(s);
+  });
+
+  return (
+    <group ref={group} position={position}>
+      <primitive object={cloned} />
+    </group>
+  );
+}
+
+// Slow-swimming anglerfish in the deep. Cruises back and forth along
+// the X axis, which makes the abyss feel populated without stealing
+// focus from the dive.
+function Anglerfish({ position }: { position: [number, number, number] }) {
+  const group = useRef<THREE.Group>(null);
+  const gltf = useGLTF("/models/anglerfish.glb", true, true, withMeshopt);
+  const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+
+  useFrame(({ clock }) => {
+    if (!group.current) return;
+    const t = clock.elapsedTime * 0.25;
+    const range = 1.6;
+    const x = position[0] + Math.sin(t) * range;
+    const dx = Math.cos(t) * range;
+    group.current.position.x = x;
+    group.current.position.y = position[1] + Math.sin(t * 1.3) * 0.15;
+    // Face the direction of travel
+    group.current.rotation.y = Math.atan2(-dx, 0.01) + Math.PI / 2;
+  });
+
+  return (
+    <group ref={group} position={position}>
+      <primitive object={cloned} scale={0.5} />
+    </group>
+  );
+}
+
+// Seabed coral decor at the bottom of the abyss band.
+function CoralBed() {
+  const gltf = useGLTF("/models/coral.glb", true, true, withMeshopt);
+  const leftRef = useRef<THREE.Group>(null);
+  const rightRef = useRef<THREE.Group>(null);
+
+  const leftClone = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+  const rightClone = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+
+  useFrame(({ clock }) => {
+    // Very subtle sway to sell the current
+    const t = clock.elapsedTime;
+    if (leftRef.current) leftRef.current.rotation.z = Math.sin(t * 0.3) * 0.02;
+    if (rightRef.current) rightRef.current.rotation.z = Math.sin(t * 0.3 + 1) * 0.02;
+  });
+
+  return (
+    <>
+      <group ref={leftRef} position={[-1.6, -9.8, -0.8]} rotation={[0, 0.4, 0]}>
+        <primitive object={leftClone} scale={0.7} />
+      </group>
+      <group ref={rightRef} position={[1.8, -10.1, -0.6]} rotation={[0, -0.6, 0]}>
+        <primitive object={rightClone} scale={0.55} />
+      </group>
+    </>
+  );
+}
+
+// Treasure chest lands at the squid's outcome depth once the distance
+// rolls into the top reward band. Stays hidden for small outcomes so
+// it reads as an actual reward moment, not background decor.
+const CHEST_REVEAL_DISTANCE_M = 400;
+
+function TreasureChest({ distance }: { distance: number | null }) {
+  const group = useRef<THREE.Group>(null);
+  const gltf = useGLTF("/models/treasure.glb", true, true, withMeshopt);
+  const cloned = useMemo(() => gltf.scene.clone(true), [gltf.scene]);
+
+  const visible = distance != null && distance >= CHEST_REVEAL_DISTANCE_M;
+  const targetY = distance != null
+    ? 1.5 - Math.min(distance, MAX_DEPTH_M) * DEPTH_WORLD_PER_METER - 0.6
+    : -10;
+
+  useFrame(({ clock }) => {
+    if (!group.current) return;
+    group.current.position.y = targetY;
+    const t = clock.elapsedTime;
+    group.current.rotation.y = Math.sin(t * 0.3) * 0.08;
+  });
+
+  if (!visible) return null;
+  return (
+    <group ref={group} position={[0, targetY, -0.4]}>
+      <primitive object={cloned} scale={0.4} />
+      {/* Soft gold glow halo */}
+      <pointLight color="#ffcf72" intensity={1.2} distance={3} decay={2} />
+    </group>
+  );
 }
 
 // Fallback primitive squid while the real model isn't downloaded yet.
@@ -395,4 +535,8 @@ function PrimitiveSquid() {
   );
 }
 
-useGLTF.preload("/models/squid.glb");
+useGLTF.preload("/models/squid.glb", true, true, withMeshopt);
+useGLTF.preload("/models/jellyfish.glb", true, true, withMeshopt);
+useGLTF.preload("/models/coral.glb", true, true, withMeshopt);
+useGLTF.preload("/models/anglerfish.glb", true, true, withMeshopt);
+useGLTF.preload("/models/treasure.glb", true, true, withMeshopt);

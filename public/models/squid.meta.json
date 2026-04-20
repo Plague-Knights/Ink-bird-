@@ -1,0 +1,10 @@
+{
+  "slug": "squid",
+  "prompt": "A cute stylized cartoon squid game mascot, iridescent violet and cyan glossy body, large cyan glowing eye, 8 tentacles and 2 longer feeding arms, smooth mantle pointing upward, low poly game-ready character with clean topology",
+  "polycount": 12000,
+  "aiModel": "latest",
+  "previewTaskId": "019dab09-7045-7da2-be5d-7ef718ec36a8",
+  "refineTaskId": "019dab0a-ad53-7a99-b6f1-dd6dc4f39bde",
+  "glbUrl": "https://assets.meshy.ai/1b1c1bf6-500a-4e57-ac71-5ac404d2c99c/tasks/019dab0a-ad53-7a99-b6f1-dd6dc4f39bde/output/model.glb?Expires=4930243200&Signature=PuL98HEcSCFwmDHhFcZSXULSfwqyNgXc77I9tLapx2PYovinlunP99yMkmbJsphfXqXRWqHJn4FaEF2L1oGpa0DEdZdu4afT26YDQhyW79M~SOjJOGiSGINBx1CoQYfmhNTSvydVMFRSUBtJvqsnBSwINZdlG0eIyIihRdDMd8sqC~9HJ9IloCnLOWlE898Rkn1HmJ2Pc-jd52rvRS0icuuuoK7dmc1NEbrvJc83e~uBtaeJlBeOthrDiUOE4H9CsEbV5H7g6XHeUAeMtU8Tz4bEHW8zpW-6KmtUpsxkcIAyAnya3mYprms29H9nFMSx~V1bQW82GP~KPgCtZCjeqA__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "generatedAt": "2026-04-20T13:20:11.424Z"
+}

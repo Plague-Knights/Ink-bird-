@@ -1,0 +1,10 @@
+{
+  "slug": "jellyfish",
+  "prompt": "A stylized cartoon deep sea jellyfish with translucent bell and long trailing tentacles, bioluminescent cyan glow on the bell and tentacle tips, low poly game asset",
+  "polycount": 6000,
+  "aiModel": "latest",
+  "previewTaskId": "019dab0b-1d1c-7e26-9513-a0f4dacb26aa",
+  "refineTaskId": "019dab0c-5924-72a3-9bae-dad77b023c35",
+  "glbUrl": "https://assets.meshy.ai/1b1c1bf6-500a-4e57-ac71-5ac404d2c99c/tasks/019dab0c-5924-72a3-9bae-dad77b023c35/output/model.glb?Expires=4930243200&Signature=hH6xb0SLasGgoiYfKcqRAXynd8vQCK3BcB9QETuIqdY~Av7pce~j6FV9203Z4SMYYq3UTeoteI2wBReBxtnxJtLwrIQ7SH05sGr6v1PFQkGrfkdratGZJGrTT8vbI72fNGibMuTkO7baIqaQwvjVzpLicoh8LkyAaorAuG~4zBILZASkCDYiX7IbRq~ir9Q90DkflMGilzN87QXYJ99LlI2cJyrYNzLf1jYLcjcAPWtfTl7eFayZgGn96xI3ju6q3D~kB2Qbk-SP-oHibP7zRtJnNR8flwxynu6-mbbd79wXd5OixmrTPmAFhqwlcE2sObfjBkoHmYfDdVyH7bKPhg__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "generatedAt": "2026-04-20T13:21:55.552Z"
+}

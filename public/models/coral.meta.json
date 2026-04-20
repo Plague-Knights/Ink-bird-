@@ -1,0 +1,10 @@
+{
+  "slug": "coral",
+  "prompt": "A stylized cartoon underwater coral cluster, branching coral shapes in cool purples and cyans with hints of pink, low poly game asset for a seabed scene, clean topology",
+  "polycount": 8000,
+  "aiModel": "latest",
+  "previewTaskId": "019dab0b-2600-7a9d-a49f-fba1fa8377ed",
+  "refineTaskId": "019dab0d-3109-7b29-8875-b63856fa2055",
+  "glbUrl": "https://assets.meshy.ai/1b1c1bf6-500a-4e57-ac71-5ac404d2c99c/tasks/019dab0d-3109-7b29-8875-b63856fa2055/output/model.glb?Expires=4930243200&Signature=XVNxt6v8oTsn11sS~KfHmPXVaWi~Ylo53w9gXvwmvDiHyV0OH6FN6SBG8dUvUSAWjNxZ2P113TJGU82NtkNt7wMUHV05OJFNOMMQBG-emCR0b~Ih9LmcAOT~nBj1TwGN-bjDDzqC1ng~VGXWLuZEmvWLWDLAh9PUN99nOQKjLvgItBDUhvjG~6tdEdCdpx9m8ndcY71yCqwRxwteAVwthxJ~GwXFKG7OqDTJojFMGpVXZLtszxr9PKtp8hlLr9m-VUeOloVUluoRqtGY~R-qM7MaKAIhSHbWYggCTAAP5r-r30rHZgcZzC067xnFq0Km30EV9vGU64UaiOaUO3pDHQ__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "generatedAt": "2026-04-20T13:24:15.324Z"
+}
