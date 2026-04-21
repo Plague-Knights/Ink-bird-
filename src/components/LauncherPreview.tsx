@@ -1,20 +1,21 @@
 "use client";
 
 // Static visual preview of the cannon-style launcher: one input (FIRE),
-// server rolls the outcome, distance-based multiplier. The further the
-// squid flies, the bigger the payout — zones are spaced wide along a
-// long landing strip with distance markers so the "distance = result"
-// reading is obvious. Uses the pipes-game ocean atmosphere.
+// server rolls the outcome, distance-based multiplier. Side-scroller
+// feel — long seascape, squid flies across, lands on open sand or
+// hits a rock. Mid-air is always safe; only the landing surface
+// determines win/bust. Uses the pipes-game ocean atmosphere.
 
 import { useEffect, useRef } from "react";
 import { GROUND_H, type Bird } from "@/lib/simulate";
 import { drawBird } from "@/lib/gameArt";
 
-const PREVIEW_W = 1160;
+const PREVIEW_W = 1800;
 const PREVIEW_H = 560;
 
 type Bubble = { x: number; y: number; r: number; tw: number };
 type Weed = { x: number; w: number; h: number; layer: 0 | 1 };
+type Rock = { x: number; w: number; h: number };
 
 export function LauncherPreview() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -24,7 +25,7 @@ export function LauncherPreview() {
     const ctx = c.getContext("2d"); if (!ctx) return;
 
     const bubbles: Bubble[] = [];
-    for (let i = 0; i < 56; i++) {
+    for (let i = 0; i < 90; i++) {
       bubbles.push({
         x: (i * 97) % PREVIEW_W,
         y: 30 + ((i * 173) % (PREVIEW_H - GROUND_H - 60)),
@@ -33,8 +34,8 @@ export function LauncherPreview() {
       });
     }
     const weeds: Weed[] = [];
-    for (let i = 0; i < 7; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
-    for (let i = 0; i < 7; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
+    for (let i = 0; i < 12; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
+    for (let i = 0; i < 12; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
 
     let raf = 0;
     let frame = 0;
@@ -65,27 +66,47 @@ export function LauncherPreview() {
   );
 }
 
-// ─── LANDING ZONES (distance-based multiplier) ───────────────────────
-// Each zone is a spaced-out patch of seabed at increasing distance from
-// the cannon. frac = position along the strip (0 = just past cannon,
-// 1 = far end). Wider gaps between high-multiplier zones sell the
-// "go further, win more" reading. Probabilities match the on-chain
-// curve (8/15/30/30/14/2.5/0.5).
-const ZONES = [
-  { mult: 0,    label: "BUST",  distance:  "6m",  color: "#ff5a5a", frac: 0.04 },
-  { mult: 0.7,  label: "0.7×",  distance: "22m",  color: "#ff9b5a", frac: 0.16 },
-  { mult: 0.9,  label: "0.9×",  distance: "44m",  color: "#ffb464", frac: 0.30 },
-  { mult: 1.05, label: "1.05×", distance: "72m",  color: "#cfe7ff", frac: 0.46 },
-  { mult: 1.2,  label: "1.2×",  distance: "108m", color: "#cfd8dc", frac: 0.63 },
-  { mult: 1.8,  label: "1.8×",  distance: "156m", color: "#ffd76a", frac: 0.79 },
-  { mult: 5.0,  label: "5×",    distance: "220m", color: "#7fe3ff", frac: 0.95 },
+// Distance markers along the sand — just the numbers, no multiplier
+// chips floating overhead. The server-rolled landing point is what
+// matters; the markers are purely for "how far did I go" readability.
+const DISTANCE_MARKERS = [
+  { distance:  "10m", frac: 0.05 },
+  { distance:  "40m", frac: 0.14 },
+  { distance:  "80m", frac: 0.26 },
+  { distance: "120m", frac: 0.38 },
+  { distance: "160m", frac: 0.50 },
+  { distance: "200m", frac: 0.62 },
+  { distance: "240m", frac: 0.74 },
+  { distance: "300m", frac: 0.87 },
+  { distance: "400m", frac: 0.97 },
+];
+
+// Rocks scattered along the seabed. Each rock is a bust zone — if the
+// squid lands on one, the play busts. Mid-air contact is cosmetic;
+// only the final landing surface determines the outcome. The rolled
+// landing distance decides whether you're on open sand or on a rock
+// cluster, so the visible rocks ARE the visible house edge.
+const ROCKS: Rock[] = [
+  { x: 0.07, w: 40, h: 22 },   // right after cannon — classic "dud" zone
+  { x: 0.20, w: 28, h: 14 },
+  { x: 0.21, w: 20, h: 10 },   // cluster with the 0.20 rock
+  { x: 0.33, w: 36, h: 18 },
+  { x: 0.57, w: 32, h: 16 },
+  { x: 0.58, w: 18, h: 8 },
+  { x: 0.69, w: 46, h: 24 },   // big jagged cluster mid-distance
+  { x: 0.71, w: 22, h: 12 },
+  { x: 0.83, w: 28, h: 14 },
+  { x: 0.92, w: 38, h: 20 },   // pre-jackpot rocks
 ];
 
 // Snapshot bird position — mid-flight for dramatic screenshot. Fraction
 // along the arc (0 = muzzle, 1 = landing point).
-const BIRD_FRAC = 0.62;
-// Which zone the arc is targeting for the snapshot (1.2×).
-const TARGET_ZONE = 4;
+const BIRD_FRAC = 0.55;
+// Where the squid will land for the snapshot (fraction of strip width).
+// 0.62 = 200m marker = a "good" distance.
+const LAND_FRAC = 0.62;
+const LAND_MULT = 1.8;
+const LAND_DISTANCE = "200m";
 
 function render(
   ctx: CanvasRenderingContext2D,
@@ -115,8 +136,8 @@ function render(
   // Light shafts
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 9; i++) {
-    const baseX = ((i * 170 + frame * 0.4) % (W2 + 240)) - 120;
+  for (let i = 0; i < 14; i++) {
+    const baseX = ((i * 180 + frame * 0.4) % (W2 + 240)) - 120;
     ctx.fillStyle = "rgba(200, 230, 255, 0.05)";
     ctx.beginPath();
     ctx.moveTo(baseX, 0);
@@ -172,102 +193,35 @@ function render(
   ctx.fillStyle = "rgba(40,25,8,0.4)";
   ctx.fillRect(0, H2 - GROUND_H, W2, 2);
 
-  // ── LANDING STRIP — spaced-out zones with distance markers ──
-  const stripY = H2 - GROUND_H - 2;
+  // ── Scatter rocks on the seabed — obstacles the squid can land on ──
   const stripStart = 150;
   const stripEnd = W2 - 40;
   const stripW = stripEnd - stripStart;
+  const sandLevel = H2 - GROUND_H + 4;
 
-  // Subtle ruled baseline
-  ctx.strokeStyle = "rgba(255,255,255,0.1)";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([2, 6]);
-  ctx.beginPath();
-  ctx.moveTo(stripStart, stripY);
-  ctx.lineTo(stripEnd, stripY);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Vertical tick marks every 20m-equivalent for distance scale
-  for (let i = 0; i <= 10; i++) {
-    const x = stripStart + (stripW * i) / 10;
-    ctx.strokeStyle = "rgba(255,255,255,0.12)";
-    ctx.beginPath();
-    ctx.moveTo(x, stripY - 4);
-    ctx.lineTo(x, stripY + 2);
-    ctx.stroke();
+  for (const r of ROCKS) {
+    const rx = stripStart + stripW * r.x;
+    drawRock(ctx, rx, sandLevel, r.w, r.h, r.x);
   }
 
-  // Zone markers — each gets a spaced-out label chip + distance marker
-  ZONES.forEach((z, i) => {
-    const zx = stripStart + stripW * z.frac;
-    const isTarget = i === TARGET_ZONE;
-
-    // Glowing floor patch under the zone
-    const patch = ctx.createRadialGradient(zx, stripY, 2, zx, stripY, 42);
-    patch.addColorStop(0, z.color + "55");
-    patch.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = patch;
+  // ── Distance markers along the sand (the only labels) ──
+  DISTANCE_MARKERS.forEach(m => {
+    const mx = stripStart + stripW * m.frac;
+    // Small tick on the sand
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.ellipse(zx, stripY, 42, 8, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Vertical beam up from the zone
-    ctx.save();
-    const beam = ctx.createLinearGradient(zx, stripY - 80, zx, stripY);
-    beam.addColorStop(0, "rgba(0,0,0,0)");
-    beam.addColorStop(1, z.color + (isTarget ? "80" : "30"));
-    ctx.fillStyle = beam;
-    ctx.beginPath();
-    ctx.moveTo(zx - 3, stripY - 80);
-    ctx.lineTo(zx + 3, stripY - 80);
-    ctx.lineTo(zx + 6, stripY);
-    ctx.lineTo(zx - 6, stripY);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-
-    // Distance marker BELOW the strip (on the sand)
-    ctx.fillStyle = "rgba(40,25,8,0.75)";
-    roundRect(ctx, zx - 22, stripY + 6, 44, 14, 3);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.8)";
-    ctx.font = 'bold 9px ui-monospace, monospace';
-    ctx.textAlign = "center";
-    ctx.fillText(z.distance, zx, stripY + 16);
-
-    // Multiplier chip ABOVE the beam (floating in water)
-    const chipY = stripY - 94;
-    const chipW = 64, chipH = 22;
-    ctx.fillStyle = "rgba(2,24,48,0.9)";
-    roundRect(ctx, zx - chipW / 2, chipY, chipW, chipH, 6);
-    ctx.fill();
-    ctx.strokeStyle = z.color;
-    ctx.lineWidth = isTarget ? 2 : 1;
-    roundRect(ctx, zx - chipW / 2, chipY, chipW, chipH, 6);
+    ctx.moveTo(mx, sandLevel + 2);
+    ctx.lineTo(mx, sandLevel + 6);
     ctx.stroke();
-    if (isTarget) {
-      ctx.shadowColor = z.color;
-      ctx.shadowBlur = 12;
-    }
-    ctx.fillStyle = z.color;
-    ctx.font = 'bold 12px "Rubik", sans-serif';
-    ctx.fillText(z.label, zx, chipY + 15);
-    ctx.shadowBlur = 0;
-
-    // Bust zone gets a small red X on the sand so it's unambiguous;
-    // other zones just read via the colored beam + chip + distance
-    // marker. No chest tokens — the multiplier IS the chest here.
-    if (z.mult === 0) {
-      const itemY = stripY - 14;
-      ctx.strokeStyle = "rgba(255, 90, 90, 0.85)";
-      ctx.lineWidth = 2.5;
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(zx - 7, itemY - 7); ctx.lineTo(zx + 7, itemY + 7);
-      ctx.moveTo(zx + 7, itemY - 7); ctx.lineTo(zx - 7, itemY + 7);
-      ctx.stroke();
-    }
+    // Distance chip
+    ctx.fillStyle = "rgba(40,25,8,0.75)";
+    roundRect(ctx, mx - 22, sandLevel + 10, 44, 14, 3);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.font = 'bold 10px ui-monospace, monospace';
+    ctx.textAlign = "center";
+    ctx.fillText(m.distance, mx, sandLevel + 20);
   });
   ctx.textAlign = "start";
 
@@ -276,24 +230,63 @@ function render(
   const cannonBaseY = H2 - GROUND_H;
   drawDetailedCannon(ctx, cannonBaseX, cannonBaseY, frame);
 
-  // Coiled rope near the cannon base (touch of piracy)
   drawCoiledRope(ctx, cannonBaseX + 68, cannonBaseY - 6);
-  // Stacked cannonball pyramid
   drawCannonballs(ctx, cannonBaseX - 46, cannonBaseY - 6);
 
-  // ── TRAJECTORY preview arc + squid mid-flight ──
+  // ── Landing point — glowing circle on sand where squid will land ──
   const muzzleX = cannonBaseX + 62;
   const muzzleY = cannonBaseY - 58;
-  const target = ZONES[TARGET_ZONE]!;
-  const landX = stripStart + stripW * target.frac;
-  const landY = stripY - 28;
-  const midX = (muzzleX + landX) / 2;
-  const apex = Math.min(muzzleY, landY) - 160;
+  const landX = stripStart + stripW * LAND_FRAC;
+  const landY = sandLevel - 2;
 
-  // Dotted trajectory
+  // Landing glow — gold for a win zone
+  const landingGlow = ctx.createRadialGradient(landX, landY, 2, landX, landY, 40);
+  landingGlow.addColorStop(0, "rgba(255, 215, 106, 0.65)");
+  landingGlow.addColorStop(1, "rgba(255, 215, 106, 0)");
+  ctx.fillStyle = landingGlow;
+  ctx.beginPath();
+  ctx.ellipse(landX, landY, 40, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Landing multiplier chip floating above
+  const chipW = 92, chipH = 28;
+  const chipY = landY - 120;
+  ctx.fillStyle = "rgba(2,24,48,0.95)";
+  roundRect(ctx, landX - chipW / 2, chipY, chipW, chipH, 8);
+  ctx.fill();
+  ctx.strokeStyle = "#ffd76a";
+  ctx.lineWidth = 2;
+  roundRect(ctx, landX - chipW / 2, chipY, chipW, chipH, 8);
+  ctx.stroke();
+  ctx.shadowColor = "rgba(255,215,106,0.8)";
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = "#ffd76a";
+  ctx.font = 'bold 16px "Rubik", sans-serif';
+  ctx.textAlign = "center";
+  ctx.fillText(LAND_MULT + "×", landX, chipY + 19);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "rgba(255,215,106,0.7)";
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.fillText(LAND_DISTANCE, landX, chipY + 30 + 10);
+  ctx.textAlign = "start";
+
+  // Thin dotted line down from chip to landing spot
+  ctx.strokeStyle = "rgba(255,215,106,0.35)";
+  ctx.lineWidth = 1.2;
+  ctx.setLineDash([3, 4]);
+  ctx.beginPath();
+  ctx.moveTo(landX, chipY + chipH + 12);
+  ctx.lineTo(landX, landY - 6);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── TRAJECTORY dotted arc (mid-air is always safe) ──
+  const midX = (muzzleX + landX) / 2;
+  const apex = Math.min(muzzleY, landY) - 180;
+
   ctx.save();
   ctx.setLineDash([4, 6]);
-  ctx.strokeStyle = "rgba(127,227,255,0.4)";
+  ctx.strokeStyle = "rgba(127,227,255,0.35)";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   for (let t = 0; t <= 1; t += 0.02) {
@@ -304,7 +297,7 @@ function render(
   ctx.stroke();
   ctx.restore();
 
-  // Squid mid-flight at BIRD_FRAC along the arc
+  // Squid mid-flight
   const t = BIRD_FRAC;
   const bx = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
   const by = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
@@ -316,7 +309,6 @@ function render(
   drawBird(ctx, bird, slope * 1.5, frame * 0.6, frame);
 
   // Motion trail behind squid
-  ctx.save();
   for (let i = 1; i <= 6; i++) {
     const tt = Math.max(0, t - i * 0.025);
     const tx = (1 - tt) * (1 - tt) * muzzleX + 2 * (1 - tt) * tt * midX + tt * tt * landX;
@@ -326,11 +318,9 @@ function render(
     ctx.arc(tx, ty, 6 - i * 0.6, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.restore();
 
-  // ── HUD: FIRE button + BET display ──
-  // Big FIRE button (single input — this is the whole game)
-  const fireX = 24, fireY = 24, fireW = 160, fireH = 58;
+  // ── HUD: FIRE button, BET, DISTANCE readout ──
+  const fireX = 24, fireY = 24, fireW = 180, fireH = 64;
   const fireBg = ctx.createLinearGradient(fireX, fireY, fireX, fireY + fireH);
   fireBg.addColorStop(0, "#ffd76a");
   fireBg.addColorStop(1, "#e0a020");
@@ -338,15 +328,14 @@ function render(
   roundRect(ctx, fireX, fireY, fireW, fireH, 12);
   ctx.fill();
   ctx.fillStyle = "#1a0a00";
-  ctx.font = 'bold 20px "Rubik", sans-serif';
+  ctx.font = 'bold 22px "Rubik", sans-serif';
   ctx.textAlign = "center";
-  ctx.fillText("FIRE", fireX + fireW / 2, fireY + 30);
+  ctx.fillText("FIRE", fireX + fireW / 2, fireY + 34);
   ctx.fillStyle = "rgba(26,10,0,0.7)";
   ctx.font = '10px ui-monospace, monospace';
-  ctx.fillText("one input · one result", fireX + fireW / 2, fireY + 48);
+  ctx.fillText("one input · one result", fireX + fireW / 2, fireY + 54);
 
-  // BET display
-  const betX = W2 - 180, betY = 24, betW = 156, betH = 58;
+  const betX = W2 - 200, betY = 24, betW = 176, betH = 64;
   ctx.fillStyle = "rgba(2,24,48,0.78)";
   roundRect(ctx, betX, betY, betW, betH, 10); ctx.fill();
   ctx.strokeStyle = "rgba(127,227,255,0.35)";
@@ -355,32 +344,43 @@ function render(
   ctx.fillStyle = "#7b94b8";
   ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = "left";
-  ctx.fillText("BET", betX + 12, betY + 18);
+  ctx.fillText("BET", betX + 14, betY + 20);
   ctx.fillStyle = "#cfe7ff";
-  ctx.font = 'bold 20px "Rubik", sans-serif';
-  ctx.fillText("0.0100", betX + 12, betY + 44);
+  ctx.font = 'bold 22px "Rubik", sans-serif';
+  ctx.fillText("0.0100", betX + 14, betY + 48);
   ctx.fillStyle = "#7b94b8";
   ctx.font = '10px ui-monospace, monospace';
-  ctx.fillText("ETH", betX + 98, betY + 44);
+  ctx.fillText("ETH", betX + 116, betY + 48);
 
-  // Distance readout center-top — updates live when firing
-  const drX = W2 / 2, drY = 34;
-  ctx.fillStyle = "rgba(2,24,48,0.78)";
-  roundRect(ctx, drX - 90, drY - 16, 180, 40, 9); ctx.fill();
+  // Center distance readout
+  const drX = W2 / 2, drY = 44;
+  ctx.fillStyle = "rgba(2,24,48,0.85)";
+  roundRect(ctx, drX - 140, drY - 20, 280, 44, 10); ctx.fill();
   ctx.strokeStyle = "rgba(127,227,255,0.3)";
-  roundRect(ctx, drX - 90, drY - 16, 180, 40, 9); ctx.stroke();
+  roundRect(ctx, drX - 140, drY - 20, 280, 44, 10); ctx.stroke();
   ctx.fillStyle = "#7b94b8";
   ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = "center";
-  ctx.fillText("DISTANCE · MULTIPLIER", drX, drY - 4);
-  ctx.fillStyle = "#7fe3ff";
-  ctx.font = 'bold 15px "Rubik", sans-serif';
-  ctx.fillText("108m  →  1.2×", drX, drY + 16);
+  ctx.fillText("LANDING · DISTANCE · MULTIPLIER", drX, drY - 4);
+  ctx.fillStyle = "#ffd76a";
+  ctx.font = 'bold 17px "Rubik", sans-serif';
+  ctx.fillText("OPEN SAND  ·  " + LAND_DISTANCE + "  →  " + LAND_MULT + "×", drX, drY + 18);
+
+  // Subtle hazard hint under the HUD
+  const hzY = drY + 38;
+  ctx.fillStyle = "rgba(2,24,48,0.6)";
+  roundRect(ctx, drX - 120, hzY, 240, 22, 6); ctx.fill();
+  ctx.fillStyle = "rgba(255, 140, 140, 0.85)";
+  ctx.font = '11px ui-monospace, monospace';
+  ctx.textAlign = "center";
+  ctx.fillText("◆ land on rock = bust  ·  land on sand = win", drX, hzY + 15);
+
+  ctx.textAlign = "start";
 
   // Vignette
   const vig = ctx.createRadialGradient(W2 / 2, H2 / 2, H2 * 0.45, W2 / 2, H2 / 2, H2 * 0.9);
   vig.addColorStop(0, "rgba(0,0,0,0)");
-  vig.addColorStop(1, "rgba(0,0,0,0.45)");
+  vig.addColorStop(1, "rgba(0,0,0,0.4)");
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, W2, H2);
 }
@@ -399,14 +399,79 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+/// Rough jagged rock silhouette on the seabed. `seed` randomizes the
+/// shape so every rock looks different without needing per-rock art.
+function drawRock(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, seed: number) {
+  // Bumpy outline — 7 points around the top half, seed-perturbed
+  const top = y - h;
+  const points: [number, number][] = [];
+  const bumps = 7;
+  for (let i = 0; i <= bumps; i++) {
+    const t = i / bumps;
+    const px = x - w / 2 + t * w;
+    const roughness = Math.sin((seed + i) * 91.7) * 0.5 + 0.5;
+    const py = top + (Math.sin(i * 1.7 + seed * 17) * 0.25 + 0.15) * h * roughness;
+    points.push([px, py]);
+  }
+
+  // Drop shadow on sand
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath();
+  ctx.ellipse(x, y + 2, w * 0.55, 3, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Rock body — dark grey/green-blue mossy stone
+  const rockGrad = ctx.createLinearGradient(0, top, 0, y);
+  rockGrad.addColorStop(0, "#4a4a52");
+  rockGrad.addColorStop(0.5, "#2a2a32");
+  rockGrad.addColorStop(1, "#181820");
+  ctx.fillStyle = rockGrad;
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2, y);
+  for (const [px, py] of points) ctx.lineTo(px, py);
+  ctx.lineTo(x + w / 2, y);
+  ctx.closePath();
+  ctx.fill();
+
+  // Mossy/algae highlight on top of rock
+  ctx.fillStyle = "rgba(60, 120, 90, 0.55)";
+  ctx.beginPath();
+  ctx.moveTo(points[0]![0], points[0]![1]);
+  for (const [px, py] of points) ctx.lineTo(px, py - 0.5);
+  // back across just above the outline
+  for (let i = points.length - 1; i >= 0; i--) {
+    const [px, py] = points[i]!;
+    ctx.lineTo(px, py + 2.2);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Highlight specks
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  for (let i = 0; i < 3; i++) {
+    const sx = x - w / 3 + (i * w) / 4;
+    const sy = top + h * 0.25 + Math.sin(seed * 11 + i) * 3;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Subtle red glow hint so rocks read as "danger" without being obnoxious
+  const glow = ctx.createRadialGradient(x, top + 2, 0, x, top + 2, w * 0.7);
+  glow.addColorStop(0, "rgba(255, 80, 80, 0.12)");
+  glow.addColorStop(1, "rgba(255, 80, 80, 0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, top + 2, w * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+}
+
 /// Detailed pirate-style cannon: tapered barrel, three brass bands with
 /// iron rivets, trunnions, dolphin handles, muzzle flash smoke, wheeled
-/// carriage with plank detail and spoked wheels. Ancored on the sand.
+/// carriage with plank detail and spoked wheels. Anchored on the sand.
 function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY: number, frame: number) {
   const angle = -0.55; // ~32° up
 
-  // ── CARRIAGE (wooden cart) ──
-  // Drawn before barrel so barrel sits on top
   const carX = baseX - 18, carY = baseY - 26;
   const carW = 64, carH = 22;
 
@@ -416,13 +481,11 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   ctx.ellipse(baseX + 10, baseY + 2, 62, 4, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Wooden side cheek (two planks with grain lines)
   const woodGrad = ctx.createLinearGradient(0, carY, 0, carY + carH);
   woodGrad.addColorStop(0, "#8b5a2b");
   woodGrad.addColorStop(0.6, "#5a3816");
   woodGrad.addColorStop(1, "#2e1a08");
   ctx.fillStyle = woodGrad;
-  // Main body
   ctx.beginPath();
   ctx.moveTo(carX, carY + 4);
   ctx.lineTo(carX + carW, carY);
@@ -431,7 +494,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   ctx.closePath();
   ctx.fill();
 
-  // Plank seams
   ctx.strokeStyle = "rgba(20,10,0,0.55)";
   ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
@@ -441,7 +503,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
     ctx.lineTo(px, carY + carH);
     ctx.stroke();
   }
-  // Wood grain strokes
   ctx.strokeStyle = "rgba(40,20,5,0.35)";
   for (let g = 0; g < 5; g++) {
     ctx.beginPath();
@@ -450,7 +511,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
     ctx.stroke();
   }
 
-  // Iron bolts on the cheek
   ctx.fillStyle = "#1a1410";
   for (const [bx, by] of [[carX + 6, carY + 8], [carX + carW - 6, carY + 6], [carX + 6, carY + carH - 5], [carX + carW - 6, carY + carH - 5]]) {
     ctx.beginPath();
@@ -458,12 +518,11 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
     ctx.fill();
   }
 
-  // ── BARREL (tapered, with 3 brass bands + rivets + trunnions) ──
+  // Barrel
   ctx.save();
   ctx.translate(baseX, baseY - 20);
   ctx.rotate(angle);
 
-  // Barrel shadow
   ctx.fillStyle = "rgba(0,0,0,0.3)";
   ctx.beginPath();
   ctx.moveTo(-6, 10);
@@ -473,8 +532,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   ctx.closePath();
   ctx.fill();
 
-  // Barrel body — tapered (wider at muzzle, narrower at breech)
-  // Draw as polygon for tapering
   const barrelGrad = ctx.createLinearGradient(0, -16, 0, 16);
   barrelGrad.addColorStop(0, "#5a5048");
   barrelGrad.addColorStop(0.35, "#2a2218");
@@ -482,19 +539,18 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   barrelGrad.addColorStop(1, "#0a0804");
   ctx.fillStyle = barrelGrad;
   ctx.beginPath();
-  ctx.moveTo(-12, -10);              // breech top
-  ctx.lineTo(68, -14);               // muzzle top
-  ctx.lineTo(72, -16);               // muzzle lip top
-  ctx.lineTo(72, 16);                // muzzle lip bottom
-  ctx.lineTo(68, 14);                // muzzle bottom
-  ctx.lineTo(-12, 10);               // breech bottom
-  ctx.lineTo(-18, 6);                // cascabel bump
+  ctx.moveTo(-12, -10);
+  ctx.lineTo(68, -14);
+  ctx.lineTo(72, -16);
+  ctx.lineTo(72, 16);
+  ctx.lineTo(68, 14);
+  ctx.lineTo(-12, 10);
+  ctx.lineTo(-18, 6);
   ctx.lineTo(-20, 0);
   ctx.lineTo(-18, -6);
   ctx.closePath();
   ctx.fill();
 
-  // Highlight strip along top of barrel
   const hiGrad = ctx.createLinearGradient(0, -10, 0, -4);
   hiGrad.addColorStop(0, "rgba(255,255,255,0.28)");
   hiGrad.addColorStop(1, "rgba(255,255,255,0)");
@@ -504,20 +560,16 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   ctx.closePath();
   ctx.fill();
 
-  // Three brass bands with iron rivets
-  const bandPositions = [0, 26, 58]; // along the barrel
+  const bandPositions = [0, 26, 58];
   for (const bx of bandPositions) {
-    // Taper interpolation for band height
     const tb = (bx + 20) / 92;
     const bandH = 10 + (1 - tb) * 4;
-    // Brass band
     const brass = ctx.createLinearGradient(0, -bandH, 0, bandH);
     brass.addColorStop(0, "#f4d48a");
     brass.addColorStop(0.5, "#c28e4a");
     brass.addColorStop(1, "#6a4820");
     ctx.fillStyle = brass;
     ctx.fillRect(bx - 2, -bandH - 1, 5, bandH * 2 + 2);
-    // Rivets
     ctx.fillStyle = "#1a1008";
     ctx.beginPath();
     ctx.arc(bx + 0.5, -bandH + 2, 1.1, 0, Math.PI * 2);
@@ -525,20 +577,17 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
     ctx.fill();
   }
 
-  // Muzzle lip (brass rim)
   const lipGrad = ctx.createLinearGradient(0, -16, 0, 16);
   lipGrad.addColorStop(0, "#f4d48a");
   lipGrad.addColorStop(0.5, "#c28e4a");
   lipGrad.addColorStop(1, "#6a4820");
   ctx.fillStyle = lipGrad;
   ctx.fillRect(68, -16, 4, 32);
-  // Inside of muzzle (dark)
   ctx.fillStyle = "#050302";
   ctx.beginPath();
   ctx.ellipse(71, 0, 2, 10, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Trunnion pivot circle
   ctx.fillStyle = "#2a2218";
   ctx.beginPath();
   ctx.arc(14, 14, 5, 0, Math.PI * 2);
@@ -548,7 +597,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   ctx.arc(14, 14, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Dolphin handle on top (decorative lifting loop)
   ctx.strokeStyle = "#c28e4a";
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
@@ -557,7 +605,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   ctx.quadraticCurveTo(28, -18, 34, -10);
   ctx.stroke();
 
-  // Cascabel ball (rear knob)
   const casc = ctx.createRadialGradient(-19, 0, 1, -19, 0, 6);
   casc.addColorStop(0, "#5a5048");
   casc.addColorStop(1, "#0a0804");
@@ -566,7 +613,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
   ctx.arc(-19, 0, 5, 0, Math.PI * 2);
   ctx.fill();
 
-  // Muzzle smoke — layered puffs with movement
   for (let i = 0; i < 4; i++) {
     const sf = frame * 0.12 + i;
     const sx = 82 + i * 6 + Math.sin(sf) * 1.5;
@@ -579,7 +625,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
     ctx.fill();
   }
 
-  // Glowing muzzle flash
   const flash = ctx.createRadialGradient(74, 0, 1, 74, 0, 18);
   flash.addColorStop(0, "rgba(255, 220, 140, 0.8)");
   flash.addColorStop(0.4, "rgba(255, 160, 60, 0.4)");
@@ -591,14 +636,12 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
 
   ctx.restore();
 
-  // ── WHEELS (spoked) ──
+  // Wheels
   for (const wx of [baseX - 10, baseX + 22]) {
-    // Outer iron rim
     ctx.fillStyle = "#1a140a";
     ctx.beginPath();
     ctx.arc(wx, baseY - 6, 14, 0, Math.PI * 2);
     ctx.fill();
-    // Wooden disk
     const wheelGrad = ctx.createRadialGradient(wx, baseY - 6, 2, wx, baseY - 6, 12);
     wheelGrad.addColorStop(0, "#8b5a2b");
     wheelGrad.addColorStop(1, "#3a2310");
@@ -606,7 +649,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
     ctx.beginPath();
     ctx.arc(wx, baseY - 6, 12, 0, Math.PI * 2);
     ctx.fill();
-    // Spokes
     ctx.strokeStyle = "#2a1a08";
     ctx.lineWidth = 2;
     for (let s = 0; s < 6; s++) {
@@ -616,7 +658,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
       ctx.lineTo(wx + Math.cos(a) * 12, baseY - 6 + Math.sin(a) * 12);
       ctx.stroke();
     }
-    // Hub
     ctx.fillStyle = "#c28e4a";
     ctx.beginPath();
     ctx.arc(wx, baseY - 6, 3.5, 0, Math.PI * 2);
@@ -629,7 +670,6 @@ function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY:
 }
 
 function drawCannonballs(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
-  // Small pyramid: 3 on bottom, 2 on top, 1 on top-top
   const r = 4.5;
   const positions = [
     [-2 * r, 0, 0], [0, 0, 0], [2 * r, 0, 0],
@@ -646,7 +686,6 @@ function drawCannonballs(ctx: CanvasRenderingContext2D, cx: number, cy: number) 
     ctx.beginPath();
     ctx.arc(bx, by, r, 0, Math.PI * 2);
     ctx.fill();
-    // Tiny highlight
     ctx.fillStyle = `rgba(255,255,255,${0.15 + row * 0.05})`;
     ctx.beginPath();
     ctx.arc(bx - 1.2, by - 1.2, 1, 0, Math.PI * 2);
@@ -655,7 +694,6 @@ function drawCannonballs(ctx: CanvasRenderingContext2D, cx: number, cy: number) 
 }
 
 function drawCoiledRope(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
-  // Concentric coils, top-down view
   ctx.strokeStyle = "#d4b080";
   ctx.lineWidth = 2.4;
   ctx.lineCap = "round";
@@ -664,7 +702,6 @@ function drawCoiledRope(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
     ctx.arc(cx, cy, 5 + i * 2.5, 0, Math.PI * 2);
     ctx.stroke();
   }
-  // Twist texture dots
   ctx.strokeStyle = "#8a6030";
   ctx.lineWidth = 0.8;
   for (let i = 0; i < 3; i++) {
