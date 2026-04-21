@@ -16,7 +16,7 @@ export default function PreviewPage() {
       padding: "14px 10px 40px",
       fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
     }}>
-      <div style={{ maxWidth: 1300, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ maxWidth: 1500, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
         <header>
           <div style={{ fontSize: 10, letterSpacing: "0.22em", color: "#7fe3ff", textTransform: "uppercase" }}>
             ink squid

@@ -37,11 +37,10 @@ type RoundStatus =
     }
   | { status: "error"; error: string };
 
-// Canvas aspect ratio tuned for portrait mobile viewing. 1200:800 =
-// 1.5:1 means on a 360px phone the scene renders at 360×240 — enough
-// vertical room for the squid's arc to read. Desktop still gets the
-// full side-scroller feel because the canvas stretches to 100% width.
-const PREVIEW_W = 1200;
+// Canvas is cinematic widescreen — 1800:800 = 2.25:1. Wider than before
+// (used to be 1200:800) so the squid has more real estate to fly into
+// and more mid-air fish can sit to the right.
+const PREVIEW_W = 1800;
 const PREVIEW_H = 800;
 // Max visual distance on the canvas = 500m maps to frac = 0.95.
 // fracFromMeters(100) = 0.24 (close), fracFromMeters(500) = 0.95 (far edge).
@@ -49,6 +48,11 @@ function fracFromMeters(m: number): number {
   const clamped = Math.max(0, Math.min(500, m));
   return 0.05 + (clamped / 500) * 0.9;
 }
+
+// Angle range (degrees) the player can pick before firing.
+const MIN_ANGLE = 20;
+const MAX_ANGLE = 75;
+const DEFAULT_ANGLE = 45;
 
 type Bubble = { x: number; y: number; r: number; tw: number };
 type Weed = { x: number; w: number; h: number; layer: 0 | 1 };
@@ -70,6 +74,11 @@ export function CannonGame() {
   const [betInput, setBetInput] = useState<string>("");
   // Re-roll the seabed layout per round so the rocks/creatures change.
   const [layoutSeed, setLayoutSeed] = useState(() => (Date.now() & 0xffff) | 1);
+  // Player-chosen firing angle in degrees. Cosmetic — the contract still
+  // determines the final landing x — but the arc apex and cannon tilt
+  // follow this value, and the arc's curve can pass through mid-air
+  // fish based on how steep/shallow the angle is.
+  const [angle, setAngle] = useState<number>(DEFAULT_ANGLE);
 
   const readAddress = CANNON_ADDR ?? undefined;
   const enabledRead = !!readAddress;
@@ -201,7 +210,34 @@ export function CannonGame() {
         round={round}
         layoutSeed={layoutSeed}
         bet={effectiveBetWei}
+        angle={angle}
       />
+
+      {/* Angle chooser — disabled mid-round so the fired arc locks in. */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 14px",
+        background: "rgba(255,255,255,0.03)",
+        border: "1px solid rgba(120,200,255,0.15)",
+        borderRadius: 12,
+      }}>
+        <span style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b94b8", minWidth: 56 }}>
+          angle
+        </span>
+        <input
+          type="range"
+          min={MIN_ANGLE}
+          max={MAX_ANGLE}
+          step={1}
+          value={angle}
+          onChange={e => setAngle(Number(e.target.value))}
+          disabled={round.status !== "idle" && round.status !== "resolved" && round.status !== "error"}
+          style={{ flex: 1, accentColor: "#7fe3ff" }}
+        />
+        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, color: "#cfe7ff", minWidth: 44, textAlign: "right" }}>
+          {angle}°
+        </span>
+      </div>
 
       <div style={{
         display: "flex", flexDirection: "column", gap: 8,
@@ -319,10 +355,12 @@ function CannonCanvas({
   round,
   layoutSeed,
   bet,
+  angle,
 }: {
   round: RoundStatus;
   layoutSeed: number;
   bet: bigint | null;
+  angle: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const resolvedAtFrameRef = useRef<number | null>(null);
@@ -331,15 +369,18 @@ function CannonCanvas({
   // it to tear down and restart on every parent re-render.
   const roundRef = useRef(round);
   const betRef = useRef(bet);
+  const angleRef = useRef(angle);
+  const lockedAngleRef = useRef<number>(angle);
   useEffect(() => { roundRef.current = round; }, [round]);
   useEffect(() => { betRef.current = bet; }, [bet]);
+  useEffect(() => { angleRef.current = angle; }, [angle]);
 
   useEffect(() => {
     const c = canvasRef.current; if (!c) return;
     const ctx = c.getContext("2d"); if (!ctx) return;
 
     const bubbles: Bubble[] = [];
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < 130; i++) {
       bubbles.push({
         x: (i * 97) % PREVIEW_W,
         y: 30 + ((i * 173) % (PREVIEW_H - GROUND_H - 60)),
@@ -348,13 +389,14 @@ function CannonCanvas({
       });
     }
     const weeds: Weed[] = [];
-    for (let i = 0; i < 12; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
-    for (let i = 0; i < 12; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
+    for (let i = 0; i < 18; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
+    for (let i = 0; i < 18; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
 
     const rocks = generateRocks(layoutSeed);
     const reefs = generateReefs(layoutSeed * 7919);
     const creatures = generateCreatures(layoutSeed * 31337);
     const midAirFish = generateMidAirFish(layoutSeed * 11117);
+    const fishHits = new Set<number>(); // indices of midAirFish hit this flight
 
     resolvedAtFrameRef.current = null;
 
@@ -363,14 +405,22 @@ function CannonCanvas({
     const tick = () => {
       frame++;
       // Track when we first saw the "resolved" state so animation
-      // progress can be measured from that moment.
+      // progress can be measured from that moment. Also lock the angle
+      // at resolve time so mid-flight slider twiddles don't warp the arc.
       const r = roundRef.current;
       if (r.status === "resolved" && resolvedAtFrameRef.current == null) {
         resolvedAtFrameRef.current = frame;
+        lockedAngleRef.current = angleRef.current;
+        fishHits.clear();
       } else if (r.status !== "resolved") {
         resolvedAtFrameRef.current = null;
+        fishHits.clear();
       }
-      render(ctx, bubbles, weeds, rocks, reefs, creatures, midAirFish, frame, r, resolvedAtFrameRef.current, betRef.current);
+      render(
+        ctx, bubbles, weeds, rocks, reefs, creatures, midAirFish, fishHits,
+        frame, r, resolvedAtFrameRef.current, betRef.current,
+        r.status === "resolved" ? lockedAngleRef.current : angleRef.current,
+      );
       raf = requestAnimationFrame(tick);
     };
     tick();
@@ -488,10 +538,12 @@ function render(
   reefs: Reef[],
   creatures: Creature[],
   midAirFish: MidAirFish[],
+  fishHits: Set<number>,
   frame: number,
   round: RoundStatus,
   resolvedAtFrame: number | null,
   bet: bigint | null,
+  angleDeg: number,
 ) {
   const W2 = PREVIEW_W, H2 = PREVIEW_H;
   ctx.clearRect(0, 0, W2, H2);
@@ -574,21 +626,34 @@ function render(
     const cx = stripStart + stripW * c.x;
     drawBottomCreature(ctx, cx, sandLevel - 6, c, frame);
   }
-  for (const f of midAirFish) {
+  // Positions of mid-air fish this frame — used for collision + render.
+  const fishPositions: { fx: number; fy: number; f: MidAirFish; idx: number }[] = [];
+  for (let i = 0; i < midAirFish.length; i++) {
+    const f = midAirFish[i]!;
     const fx = stripStart + stripW * f.x + Math.sin(frame * 0.02 + f.phase) * 20;
     const fy = 60 + (H2 - GROUND_H - 120) * f.y + Math.sin(frame * 0.03 + f.phase) * 8;
-    drawFishSprite(ctx, fx, fy, f.color, f.size, f.flip, frame + f.phase * 30);
+    fishPositions.push({ fx, fy, f, idx: i });
+    if (!fishHits.has(i)) {
+      drawFishSprite(ctx, fx, fy, f.color, f.size, f.flip, frame + f.phase * 30);
+    }
   }
 
-  // Cannon
+  // Cannon — tilt follows the player's chosen angle. angleDeg is the
+  // elevation (0 = horizontal to the right, 90 = straight up); canvas y
+  // grows downward, so the barrel's rotation is -radians(angleDeg).
   const cannonBaseX = 92;
   const cannonBaseY = H2 - GROUND_H;
   const puff = round.status === "awaiting_play" || round.status === "revealing";
-  drawDetailedCannon(ctx, cannonBaseX, cannonBaseY, frame, puff);
+  const barrelRad = -(angleDeg * Math.PI) / 180;
+  drawDetailedCannon(ctx, cannonBaseX, cannonBaseY, frame, puff, barrelRad);
 
   // ── SQUID: either loaded in cannon (idle) or flying (resolved) ──
-  const muzzleX = cannonBaseX + 62;
-  const muzzleY = cannonBaseY - 58;
+  // Muzzle tip follows the barrel tilt so the squid appears to exit the
+  // mouth of the cannon, not from a fixed spot in space.
+  const BARREL_LEN = 72;
+  const PIVOT_Y_OFFSET = 20;
+  const muzzleX = cannonBaseX + Math.cos(barrelRad) * BARREL_LEN;
+  const muzzleY = cannonBaseY - PIVOT_Y_OFFSET + Math.sin(barrelRad) * BARREL_LEN;
 
   if (round.status === "resolved" && resolvedAtFrame != null) {
     // Animate flight over ~90 frames after resolution. Distance rolled
@@ -605,7 +670,12 @@ function render(
     const landY = sandLevel - 4;
 
     const midX = (muzzleX + landX) / 2;
-    const apex = Math.min(muzzleY, landY) - 200;
+    // Apex height scales with the chosen angle — 20° gives a shallow
+    // low trajectory (apex barely above the muzzle), 75° gives a high
+    // lob that can reach the upper mid-air fish.
+    const angleT = (angleDeg - MIN_ANGLE) / (MAX_ANGLE - MIN_ANGLE); // 0..1
+    const apexLift = 110 + angleT * 340; // 110..450 px above lower endpoint
+    const apex = Math.min(muzzleY, landY) - apexLift;
 
     // Draw full dotted arc (faded)
     ctx.save();
@@ -642,6 +712,42 @@ function render(
 
     const bird: Bird = { x: bx, y: by, vy: 0, r: 18 };
     drawBird(ctx, bird, slope * 1.5, frame * 0.6, frame);
+
+    // Mid-air fish hit detection — cosmetic only (payout is already
+    // fixed by the contract). If the squid's hitbox overlaps a fish,
+    // mark it hit and draw a burst at its position.
+    if (animProgress > 0.04 && animProgress < 0.98) {
+      for (const fp of fishPositions) {
+        if (fishHits.has(fp.idx)) continue;
+        const fishR = 22 * fp.f.size;
+        const dx = bx - fp.fx;
+        const dy = by - fp.fy;
+        if (dx * dx + dy * dy < (18 + fishR) * (18 + fishR)) {
+          fishHits.add(fp.idx);
+        }
+      }
+    }
+    for (const fp of fishPositions) {
+      if (!fishHits.has(fp.idx)) continue;
+      // Burst particles — 8 little sparks radiating from the fish spot.
+      const age = (frame - resolvedAtFrame) % 200;
+      const burstA = Math.max(0, 1 - age / 40);
+      if (burstA > 0) {
+        ctx.save();
+        ctx.strokeStyle = `rgba(255, 215, 106, ${burstA})`;
+        ctx.lineWidth = 2;
+        for (let s = 0; s < 8; s++) {
+          const a = (s / 8) * Math.PI * 2;
+          const r1 = 6 + age * 0.8;
+          const r2 = r1 + 10;
+          ctx.beginPath();
+          ctx.moveTo(fp.fx + Math.cos(a) * r1, fp.fy + Math.sin(a) * r1);
+          ctx.lineTo(fp.fx + Math.cos(a) * r2, fp.fy + Math.sin(a) * r2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
 
     // Landing effect after animation completes
     if (animProgress >= 0.98) {
@@ -913,8 +1019,8 @@ function rgbToHex(r: number, g: number, b: number) {
   return `#${c(r)}${c(g)}${c(b)}`;
 }
 
-function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY: number, frame: number, extraSmoke: boolean) {
-  const angle = -0.55;
+function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY: number, frame: number, extraSmoke: boolean, barrelRad: number) {
+  const angle = barrelRad;
 
   // Carriage
   const carX = baseX - 18, carY = baseY - 26;
