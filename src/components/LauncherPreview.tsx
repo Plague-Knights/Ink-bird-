@@ -8,7 +8,7 @@
 
 import { useEffect, useRef } from "react";
 import { GROUND_H, type Bird } from "@/lib/simulate";
-import { drawBird, drawChest, drawDroplet } from "@/lib/gameArt";
+import { drawBird } from "@/lib/gameArt";
 
 const PREVIEW_W = 1160;
 const PREVIEW_H = 560;
@@ -255,28 +255,18 @@ function render(
     ctx.fillText(z.label, zx, chipY + 15);
     ctx.shadowBlur = 0;
 
-    // Chest or bust token sitting on the zone
-    const itemY = stripY - 28;
+    // Bust zone gets a small red X on the sand so it's unambiguous;
+    // other zones just read via the colored beam + chip + distance
+    // marker. No chest tokens — the multiplier IS the chest here.
     if (z.mult === 0) {
-      // Bust marker — X skull via darker ink drop
-      ctx.save();
-      ctx.globalAlpha = 0.6;
-      drawDroplet(ctx, zx, itemY, 10, frame);
-      ctx.restore();
-      // X overlay
-      ctx.strokeStyle = "#ff5a5a";
+      const itemY = stripY - 14;
+      ctx.strokeStyle = "rgba(255, 90, 90, 0.85)";
       ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
       ctx.beginPath();
-      ctx.moveTo(zx - 6, itemY - 6); ctx.lineTo(zx + 6, itemY + 6);
-      ctx.moveTo(zx + 6, itemY - 6); ctx.lineTo(zx - 6, itemY + 6);
+      ctx.moveTo(zx - 7, itemY - 7); ctx.lineTo(zx + 7, itemY + 7);
+      ctx.moveTo(zx + 7, itemY - 7); ctx.lineTo(zx - 7, itemY + 7);
       ctx.stroke();
-    } else if (z.mult >= 1.8) {
-      const tier: 0 | 1 | 2 | 3 = z.mult >= 5 ? 3 : 2;
-      drawChest(ctx, zx, itemY, frame, tier);
-    } else if (z.mult >= 1.05) {
-      drawChest(ctx, zx, itemY, frame, z.mult >= 1.2 ? 1 : 0);
-    } else {
-      drawDroplet(ctx, zx, itemY, 10, frame);
     }
   });
   ctx.textAlign = "start";
