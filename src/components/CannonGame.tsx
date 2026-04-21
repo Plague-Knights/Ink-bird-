@@ -37,8 +37,12 @@ type RoundStatus =
     }
   | { status: "error"; error: string };
 
-const PREVIEW_W = 1800;
-const PREVIEW_H = 560;
+// Canvas aspect ratio tuned for portrait mobile viewing. 1440:720 = 2:1
+// means on a 360px phone the scene renders at 360×180, legible instead
+// of a 110px sliver. Desktop still gets the side-scroller feel via
+// width: 100% on the canvas wrapper.
+const PREVIEW_W = 1440;
+const PREVIEW_H = 720;
 // Max visual distance on the canvas = 500m maps to frac = 0.95.
 // fracFromMeters(100) = 0.24 (close), fracFromMeters(500) = 0.95 (far edge).
 function fracFromMeters(m: number): number {

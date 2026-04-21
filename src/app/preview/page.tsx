@@ -31,7 +31,7 @@ export default function PreviewPage() {
       minHeight: "100vh",
       background: "linear-gradient(180deg, #02122a 0%, #050a1f 100%)",
       color: "#cfe7ff",
-      padding: "24px 20px 48px",
+      padding: "14px 10px 40px",
       fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
     }}>
       <div style={{ maxWidth: 1300, margin: "0 auto", display: "flex", flexDirection: "column", gap: 18 }}>
@@ -72,8 +72,8 @@ export default function PreviewPage() {
         <div style={{
           background: "rgba(2,24,48,0.4)",
           border: "1px solid rgba(127,227,255,0.18)",
-          borderRadius: 16,
-          padding: 18,
+          borderRadius: 14,
+          padding: 10,
         }}>
           {mode === "target" ? <TargetPickPreview /> : <CannonGame />}
         </div>
