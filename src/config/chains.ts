@@ -27,3 +27,19 @@ export const inkSepolia = defineChain({
   },
   testnet: true,
 });
+
+// Soneium Minato testnet — supported alongside Ink Sepolia for the
+// chest game so players can try whichever testnet they already have
+// gas on. Chain id 1946.
+export const soneiumMinato = defineChain({
+  id: 1946,
+  name: "Soneium Minato",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.minato.soneium.org"] },
+  },
+  blockExplorers: {
+    default: { name: "Soneium Minato Blockscout", url: "https://soneium-minato.blockscout.com" },
+  },
+  testnet: true,
+});

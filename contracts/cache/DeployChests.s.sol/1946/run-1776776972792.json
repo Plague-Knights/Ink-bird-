@@ -1,0 +1,13 @@
+{
+  "transactions": [
+    {
+      "rpc": "https://rpc.minato.soneium.org"
+    },
+    {
+      "rpc": "https://rpc.minato.soneium.org"
+    },
+    {
+      "rpc": "https://rpc.minato.soneium.org"
+    }
+  ]
+}

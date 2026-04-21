@@ -1,0 +1,13 @@
+{
+  "transactions": [
+    {
+      "rpc": "https://rpc-gel-sepolia.inkonchain.com"
+    },
+    {
+      "rpc": "https://rpc-gel-sepolia.inkonchain.com"
+    },
+    {
+      "rpc": "https://rpc-gel-sepolia.inkonchain.com"
+    }
+  ]
+}

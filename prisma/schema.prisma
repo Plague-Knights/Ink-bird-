@@ -119,6 +119,48 @@ model LaunchRound {
   @@index([address, createdAt])
 }
 
+// "Squid Chests" auto-flapper RNG game. Settled ON-CHAIN via the
+// InkSquidChests contract; this row mirrors the round for UX (status
+// polling, animation hand-off) and for keeping the seed pre-image
+// off-chain until reveal.
+//
+// Lifecycle:
+//   1. POST /api/chest/open → server stores { seedHash, seed (private) }
+//   2. Player calls contract.play(seedHash) via wagmi
+//   3. ChestWatcher sees Played event → fills contractRoundId/weekId/betWei/playedAt,
+//      then signs reveal(roundId, seed) using the resolver key
+//   4. ChestWatcher sees Resolved event → fills payoutWei/chestsHit/chestsTotal/died/settledAt
+//   5. Frontend polls /api/chest/byHash/:hash and animates from the resolved data
+model ChestRound {
+  id              String    @id @default(cuid())
+  address         String?
+  seedHash        String    @unique
+  seed            String
+  contractRoundId Int?
+  weekId          Int?
+  betWei          String?
+  payoutWei       String?
+  chestsHit       Int?
+  chestsTotal     Int?
+  died            Boolean?
+  txPlay          String?
+  txReveal        String?
+  createdAt       DateTime  @default(now())
+  playedAt        DateTime?
+  settledAt       DateTime?
+
+  @@index([address, createdAt])
+  @@index([contractRoundId])
+  @@index([settledAt])
+}
+
+// Cursor table — single row tracking the highest block the chest
+// watcher has scanned, so it doesn't re-walk history every tick.
+model ChestWatcherCursor {
+  id        Int    @id @default(1)
+  lastBlock String // BigInt as decimal string for Postgres compatibility
+}
+
 // "Squid Cannon" launcher mode. Same commit-reveal cycle as DiveRound:
 // the server pre-commits keccak256(seed) via /api/cannon/open, the
 // player sends a salt with their bet to /api/cannon/play, the server

@@ -1,0 +1,15 @@
+[profile.default]
+src = "src"
+out = "out"
+# Forge installed submodules into the parent ink-bird repo's lib/ dir
+# (because that's where the .git lives), so we point libs there
+# instead of contracts/lib.
+libs = ["../lib"]
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+
+[rpc_endpoints]
+ink_sepolia = "https://rpc-gel-sepolia.inkonchain.com"
+ink_mainnet = "https://rpc-gel.inkonchain.com"
+soneium_minato = "https://rpc.minato.soneium.org"
