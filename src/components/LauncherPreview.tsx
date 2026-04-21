@@ -335,24 +335,20 @@ function render(
     drawMidAirFish(ctx, fx, fy, f, frame);
   }
 
-  // ── Distance markers along the sand (the only labels) ──
+  // Faint distance ticks on the sand — no chips, just tiny labels so
+  // the player has a sense of scale without the HUD shouting at them.
+  ctx.textAlign = "center";
   DISTANCE_MARKERS.forEach(m => {
     const mx = stripStart + stripW * m.frac;
-    // Small tick on the sand
-    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(mx, sandLevel + 2);
-    ctx.lineTo(mx, sandLevel + 6);
+    ctx.moveTo(mx, sandLevel + 1);
+    ctx.lineTo(mx, sandLevel + 5);
     ctx.stroke();
-    // Distance chip
-    ctx.fillStyle = "rgba(40,25,8,0.75)";
-    roundRect(ctx, mx - 22, sandLevel + 10, 44, 14, 3);
-    ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.font = 'bold 10px ui-monospace, monospace';
-    ctx.textAlign = "center";
-    ctx.fillText(m.distance, mx, sandLevel + 20);
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.fillText(m.distance, mx, sandLevel + 16);
   });
   ctx.textAlign = "start";
 
@@ -379,34 +375,27 @@ function render(
   ctx.ellipse(landX, landY, 40, 10, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Landing multiplier chip floating above
-  const chipW = 92, chipH = 28;
-  const chipY = landY - 120;
-  ctx.fillStyle = "rgba(2,24,48,0.95)";
+  // Simple multiplier badge at the landing point — just the number.
+  const chipW = 58, chipH = 28;
+  const chipY = landY - 90;
+  ctx.shadowColor = "rgba(255,215,106,0.6)";
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = "rgba(255, 215, 106, 0.95)";
   roundRect(ctx, landX - chipW / 2, chipY, chipW, chipH, 8);
   ctx.fill();
-  ctx.strokeStyle = "#ffd76a";
-  ctx.lineWidth = 2;
-  roundRect(ctx, landX - chipW / 2, chipY, chipW, chipH, 8);
-  ctx.stroke();
-  ctx.shadowColor = "rgba(255,215,106,0.8)";
-  ctx.shadowBlur = 14;
-  ctx.fillStyle = "#ffd76a";
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#1a0a00";
   ctx.font = 'bold 16px "Rubik", sans-serif';
   ctx.textAlign = "center";
   ctx.fillText(LAND_MULT + "×", landX, chipY + 19);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = "rgba(255,215,106,0.7)";
-  ctx.font = '10px ui-monospace, monospace';
-  ctx.fillText(LAND_DISTANCE, landX, chipY + 30 + 10);
   ctx.textAlign = "start";
 
-  // Thin dotted line down from chip to landing spot
+  // Thin guide dot line down to landing
   ctx.strokeStyle = "rgba(255,215,106,0.35)";
   ctx.lineWidth = 1.2;
-  ctx.setLineDash([3, 4]);
+  ctx.setLineDash([2, 4]);
   ctx.beginPath();
-  ctx.moveTo(landX, chipY + chipH + 12);
+  ctx.moveTo(landX, chipY + chipH + 4);
   ctx.lineTo(landX, landY - 6);
   ctx.stroke();
   ctx.setLineDash([]);
@@ -458,19 +447,24 @@ function render(
   ctx.restore();
 
   // ── Bounce impact — a startled fish at the seabed kicks the squid up ──
-  // Draw a conspicuous bouncer fish at the bounce point
+  // No labels — the visual (fish + shockwave + split arc) tells it.
   ctx.save();
   drawBottomCreature(ctx, bounceX, bounceY - 4, {
-    x: 0, kind: "fish", color: "#ffd76a", size: 1.3, flip: true,
+    x: 0, kind: "fish", color: "#ffd76a", size: 1.4, flip: true,
   }, frame);
-  // Shockwave ring at seabed level
   const shockR = 24 + Math.sin(frame * 0.2) * 2;
   ctx.strokeStyle = "rgba(255, 180, 80, 0.7)";
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.ellipse(bounceX, bounceY, shockR, 5, 0, 0, Math.PI * 2);
   ctx.stroke();
-  // Sand/debris puffs around the bouncer at ground level
+  // Subtle concentric wave
+  ctx.strokeStyle = "rgba(255, 180, 80, 0.3)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.ellipse(bounceX, bounceY, shockR + 8, 8, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  // Sand/debris puffs
   for (let i = 0; i < 8; i++) {
     const ang = (i / 8) * Math.PI - Math.PI;
     const d = 16 + (i % 3) * 4;
@@ -481,26 +475,6 @@ function render(
     ctx.arc(px, py, 1.8 - (i % 2) * 0.4, 0, Math.PI * 2);
     ctx.fill();
   }
-  // "BOUNCED OFF FISH" label just above the bouncer, not floating high
-  const labelY = bounceY - 34;
-  ctx.fillStyle = "rgba(2,24,48,0.9)";
-  roundRect(ctx, bounceX - 70, labelY, 140, 20, 5); ctx.fill();
-  ctx.strokeStyle = "rgba(255, 180, 80, 0.75)";
-  ctx.lineWidth = 1;
-  roundRect(ctx, bounceX - 70, labelY, 140, 20, 5); ctx.stroke();
-  ctx.fillStyle = "#ffb458";
-  ctx.font = 'bold 10px "Rubik", sans-serif';
-  ctx.textAlign = "center";
-  ctx.fillText("BOUNCED OFF FISH", bounceX, labelY + 13);
-  // Tiny pointer triangle down to the fish
-  ctx.fillStyle = "rgba(2,24,48,0.9)";
-  ctx.beginPath();
-  ctx.moveTo(bounceX - 5, labelY + 20);
-  ctx.lineTo(bounceX + 5, labelY + 20);
-  ctx.lineTo(bounceX, labelY + 26);
-  ctx.closePath();
-  ctx.fill();
-  ctx.textAlign = "start";
   ctx.restore();
 
   // ── Squid mid-flight along arc B ──
@@ -519,52 +493,6 @@ function render(
     ctx.arc(tp.x, tp.y, 6 - i * 0.6, 0, Math.PI * 2);
     ctx.fill();
   }
-
-  // ── PAYOUT LEGEND across the top — the reference key for distances ──
-  const legY = 110;
-  const legStart = 240;
-  const legEnd = W2 - 240;
-  const legW = legEnd - legStart;
-  // Backing bar
-  ctx.fillStyle = "rgba(2,24,48,0.55)";
-  roundRect(ctx, legStart - 14, legY - 14, legW + 28, 52, 10);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(127,227,255,0.2)";
-  ctx.lineWidth = 1;
-  roundRect(ctx, legStart - 14, legY - 14, legW + 28, 52, 10);
-  ctx.stroke();
-  // Header
-  ctx.fillStyle = "#7b94b8";
-  ctx.font = '10px ui-monospace, monospace';
-  ctx.textAlign = "left";
-  ctx.fillText("PAYOUT BY DISTANCE", legStart - 4, legY - 2);
-  // Chips + connecting line
-  ctx.strokeStyle = "rgba(127,227,255,0.25)";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([2, 4]);
-  ctx.beginPath();
-  ctx.moveTo(legStart, legY + 18);
-  ctx.lineTo(legEnd, legY + 18);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  PAYOUT_LEGEND.forEach((p, i) => {
-    const cx = legStart + (legW * i) / (PAYOUT_LEGEND.length - 1);
-    // Color dot
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(cx, legY + 18, 4, 0, Math.PI * 2);
-    ctx.fill();
-    // Multiplier label
-    ctx.fillStyle = p.color;
-    ctx.font = 'bold 13px "Rubik", sans-serif';
-    ctx.textAlign = "center";
-    ctx.fillText(p.mult, cx, legY + 10);
-    // Distance range below
-    ctx.fillStyle = "rgba(255,255,255,0.55)";
-    ctx.font = '9px ui-monospace, monospace';
-    ctx.fillText(p.distance, cx, legY + 34);
-  });
-  ctx.textAlign = "start";
 
   // ── HUD: FIRE button, BET, DISTANCE readout ──
   const fireX = 24, fireY = 24, fireW = 180, fireH = 64;
@@ -599,21 +527,7 @@ function render(
   ctx.font = '10px ui-monospace, monospace';
   ctx.fillText("ETH", betX + 116, betY + 48);
 
-  // Center distance readout
-  const drX = W2 / 2, drY = 44;
-  ctx.fillStyle = "rgba(2,24,48,0.85)";
-  roundRect(ctx, drX - 140, drY - 20, 280, 44, 10); ctx.fill();
-  ctx.strokeStyle = "rgba(127,227,255,0.3)";
-  roundRect(ctx, drX - 140, drY - 20, 280, 44, 10); ctx.stroke();
-  ctx.fillStyle = "#7b94b8";
-  ctx.font = '10px ui-monospace, monospace';
-  ctx.textAlign = "center";
-  ctx.fillText("BOUNCE · FINAL LANDING · MULTIPLIER", drX, drY - 4);
-  ctx.fillStyle = "#ffd76a";
-  ctx.font = 'bold 17px "Rubik", sans-serif';
-  ctx.fillText("FISH BOUNCE + LIVED  ·  " + LAND_DISTANCE + "  →  " + LAND_MULT + "×", drX, drY + 18);
-
-  ctx.textAlign = "start";
+  // No center readout — the landing chip + payout legend tell the story.
 
   // Vignette
   const vig = ctx.createRadialGradient(W2 / 2, H2 / 2, H2 * 0.45, W2 / 2, H2 / 2, H2 * 0.9);
@@ -1002,61 +916,160 @@ function drawMidAirFish(ctx: CanvasRenderingContext2D, cx: number, cy: number, f
   drawFishSprite(ctx, cx, cy, f.color, f.size, f.flip, frame + f.phase * 30);
 }
 
-/// Tiny stylized fish sprite — oval body, triangular tail, dot eye,
-/// tail flicks with frame for a little life. `flip` mirrors the
-/// facing direction so a shoal doesn't all point the same way.
+/// Stylized tropical/reef fish sprite: teardrop body shape (fatter
+/// head, tapering toward tail), forked tail, proper pectoral +
+/// dorsal fins, stripes/spots pattern, glowing underbelly gradient,
+/// expressive eye with highlight. Tail flicks subtly with frame.
 function drawFishSprite(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string, size: number, flip: boolean, frame: number) {
-  const L = 18 * size;
-  const H2 = 8 * size;
+  const L = 26 * size;
+  const H2 = 11 * size;
   ctx.save();
   ctx.translate(cx, cy);
   if (flip) ctx.scale(-1, 1);
-  // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.18)";
+
+  // Drop shadow on whatever's below
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
   ctx.beginPath();
-  ctx.ellipse(0, H2 * 0.9, L * 0.5, 1.6, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, H2 * 0.95, L * 0.45, 1.8, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Body gradient
+
+  const tailFlick = Math.sin(frame * 0.25) * 3;
+
+  // ── Tail fin — forked, drawn before body so body covers its root ──
+  ctx.fillStyle = darken(color, 0.35);
+  ctx.beginPath();
+  ctx.moveTo(-L * 0.38, 0);
+  ctx.quadraticCurveTo(-L * 0.55, -H2 * 0.3, -L * 0.62, -H2 * 1.1 + tailFlick);
+  ctx.quadraticCurveTo(-L * 0.5, -H2 * 0.3, -L * 0.4, -H2 * 0.1);
+  ctx.quadraticCurveTo(-L * 0.5, H2 * 0.3, -L * 0.62, H2 * 1.1 - tailFlick);
+  ctx.quadraticCurveTo(-L * 0.55, H2 * 0.3, -L * 0.38, 0);
+  ctx.closePath();
+  ctx.fill();
+  // Tail fin stripes
+  ctx.strokeStyle = darken(color, 0.5);
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 3; i++) {
+    const t = 0.25 + i * 0.25;
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.4, 0);
+    ctx.quadraticCurveTo(-L * (0.45 + t * 0.1), -H2 * t, -L * (0.52 + t * 0.08), -H2 * (0.4 + t * 0.5) + tailFlick * 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.4, 0);
+    ctx.quadraticCurveTo(-L * (0.45 + t * 0.1), H2 * t, -L * (0.52 + t * 0.08), H2 * (0.4 + t * 0.5) - tailFlick * 0.6);
+    ctx.stroke();
+  }
+
+  // ── Body — teardrop shape (fat head, tapering tail) ──
   const bodyGrad = ctx.createLinearGradient(0, -H2, 0, H2);
-  bodyGrad.addColorStop(0, lighten(color, 0.25));
-  bodyGrad.addColorStop(0.5, color);
-  bodyGrad.addColorStop(1, darken(color, 0.35));
+  bodyGrad.addColorStop(0, lighten(color, 0.35));
+  bodyGrad.addColorStop(0.45, color);
+  bodyGrad.addColorStop(0.85, darken(color, 0.2));
+  bodyGrad.addColorStop(1, darken(color, 0.45));
   ctx.fillStyle = bodyGrad;
   ctx.beginPath();
-  ctx.ellipse(0, 0, L / 2, H2, 0, 0, Math.PI * 2);
+  ctx.moveTo(L * 0.5, 0);                                                      // snout
+  ctx.bezierCurveTo(L * 0.5, -H2 * 0.85, L * 0.22, -H2 * 1.05, 0, -H2 * 0.95);  // top-front curve
+  ctx.bezierCurveTo(-L * 0.22, -H2 * 0.9, -L * 0.38, -H2 * 0.35, -L * 0.4, 0); // top-back taper
+  ctx.bezierCurveTo(-L * 0.38, H2 * 0.35, -L * 0.22, H2 * 0.9, 0, H2 * 0.95);  // bottom-back
+  ctx.bezierCurveTo(L * 0.22, H2 * 1.05, L * 0.5, H2 * 0.85, L * 0.5, 0);      // bottom-front
+  ctx.closePath();
   ctx.fill();
-  // Tail (flicks)
-  const tailFlick = Math.sin(frame * 0.3) * 2;
+
+  // ── Stripes — 3 vertical stripes across the body ──
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  ctx.fillStyle = darken(color, 0.35);
+  for (let i = 0; i < 3; i++) {
+    const sx = L * 0.2 - i * L * 0.2;
+    const sw = L * 0.07;
+    ctx.beginPath();
+    ctx.moveTo(sx - sw / 2, -H2 * 0.8);
+    ctx.quadraticCurveTo(sx, -H2 * 0.9, sx + sw / 2, -H2 * 0.8);
+    ctx.lineTo(sx + sw / 2, H2 * 0.8);
+    ctx.quadraticCurveTo(sx, H2 * 0.9, sx - sw / 2, H2 * 0.8);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // ── Belly highlight — pale underside ──
+  ctx.fillStyle = "rgba(255,255,255,0.22)";
+  ctx.beginPath();
+  ctx.ellipse(L * 0.08, H2 * 0.55, L * 0.3, H2 * 0.28, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Dorsal fin — spiky top fin ──
   ctx.fillStyle = darken(color, 0.25);
   ctx.beginPath();
-  ctx.moveTo(-L / 2 + 1, 0);
-  ctx.lineTo(-L / 2 - L * 0.35, -H2 * 0.8 + tailFlick);
-  ctx.lineTo(-L / 2 - L * 0.25, 0);
-  ctx.lineTo(-L / 2 - L * 0.35, H2 * 0.8 - tailFlick);
+  ctx.moveTo(-L * 0.1, -H2 * 0.9);
+  ctx.lineTo(-L * 0.05, -H2 * 1.55);
+  ctx.lineTo(L * 0.06, -H2 * 1.75);
+  ctx.lineTo(L * 0.12, -H2 * 1.5);
+  ctx.lineTo(L * 0.2, -H2 * 0.95);
   ctx.closePath();
   ctx.fill();
-  // Top fin
+  // Dorsal spine lines
+  ctx.strokeStyle = darken(color, 0.5);
+  ctx.lineWidth = 0.8;
+  for (let i = 0; i < 3; i++) {
+    const t = 0.2 + i * 0.25;
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.1 + t * L * 0.3, -H2 * 0.9);
+    ctx.lineTo(-L * 0.05 + t * L * 0.2, -H2 * (1.3 + t * 0.3));
+    ctx.stroke();
+  }
+
+  // ── Pectoral fin — the side flipper, animated flap ──
+  const flap = Math.sin(frame * 0.2) * 0.15;
+  ctx.save();
+  ctx.translate(L * 0.05, H2 * 0.25);
+  ctx.rotate(flap);
   ctx.fillStyle = darken(color, 0.15);
   ctx.beginPath();
-  ctx.moveTo(-L * 0.15, -H2 * 0.9);
-  ctx.lineTo(L * 0.05, -H2 * 1.6);
-  ctx.lineTo(L * 0.2, -H2 * 0.9);
-  ctx.closePath();
+  ctx.ellipse(0, 0, L * 0.22, H2 * 0.35, -0.5, 0, Math.PI * 2);
   ctx.fill();
-  // Belly highlight
-  ctx.fillStyle = "rgba(255,255,255,0.3)";
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
   ctx.beginPath();
-  ctx.ellipse(0, H2 * 0.45, L * 0.35, H2 * 0.35, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, L * 0.17, H2 * 0.22, -0.5, 0, Math.PI * 2);
   ctx.fill();
-  // Eye
+  ctx.restore();
+
+  // ── Gill slit ──
+  ctx.strokeStyle = darken(color, 0.45);
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(L * 0.32, -H2 * 0.35);
+  ctx.quadraticCurveTo(L * 0.28, 0, L * 0.32, H2 * 0.35);
+  ctx.stroke();
+
+  // ── Eye — larger, with iris + highlight ──
+  const eyeX = L * 0.4, eyeY = -H2 * 0.3;
   ctx.fillStyle = "#fff";
   ctx.beginPath();
-  ctx.arc(L * 0.28, -H2 * 0.2, 2.2, 0, Math.PI * 2);
+  ctx.arc(eyeX, eyeY, H2 * 0.3, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#0a0320";
+  // Iris
+  ctx.fillStyle = "#0a0a1a";
   ctx.beginPath();
-  ctx.arc(L * 0.3, -H2 * 0.2, 1.1, 0, Math.PI * 2);
+  ctx.arc(eyeX + H2 * 0.05, eyeY + H2 * 0.02, H2 * 0.19, 0, Math.PI * 2);
   ctx.fill();
+  // Pupil highlight
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(eyeX + H2 * 0.12, eyeY - H2 * 0.08, H2 * 0.08, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ── Little bioluminescent glow dot on body ──
+  const glowX = -L * 0.05, glowY = 0;
+  const spark = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, H2 * 0.5);
+  spark.addColorStop(0, "rgba(255,255,255,0.6)");
+  spark.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = spark;
+  ctx.beginPath();
+  ctx.arc(glowX, glowY, H2 * 0.5, 0, Math.PI * 2);
+  ctx.fill();
+
   ctx.restore();
 }
 
