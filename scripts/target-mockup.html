@@ -1,0 +1,602 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ink Squid — Target Pick Mockup</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #070a16;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #e6ecff;
+  }
+  .wrap {
+    width: 1280px;
+    padding: 28px;
+    display: grid;
+    grid-template-columns: 760px 1fr;
+    gap: 24px;
+  }
+  .scene-wrap {
+    position: relative;
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(124, 79, 214, 0.25);
+  }
+  canvas { display: block; }
+  .hud-top {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    right: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    pointer-events: none;
+  }
+  .pill {
+    background: rgba(10, 6, 28, 0.72);
+    border: 1px solid rgba(124, 79, 214, 0.35);
+    backdrop-filter: blur(8px);
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: #cdbefa;
+  }
+  .pill b { color: #fff; font-weight: 600; }
+  .hud-bottom {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    right: 14px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .chip {
+    background: rgba(10, 6, 28, 0.78);
+    border: 1px solid rgba(124, 79, 214, 0.3);
+    border-radius: 10px;
+    padding: 6px 10px;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: #b8aee6;
+  }
+  .chip .v { color: #fff; font-weight: 600; }
+  .goal-marker {
+    position: absolute;
+    pointer-events: none;
+    text-align: center;
+  }
+  .goal-marker .badge {
+    background: linear-gradient(180deg, #ffd76a, #c9902b);
+    color: #2a1a03;
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 2px solid #fff6c8;
+    box-shadow: 0 8px 24px rgba(255, 215, 106, 0.4), inset 0 0 0 1px rgba(255,255,255,0.3);
+  }
+  .goal-marker .arrow {
+    width: 0; height: 0;
+    margin: 2px auto 0;
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 10px solid #ffd76a;
+    filter: drop-shadow(0 2px 6px rgba(255, 215, 106, 0.5));
+  }
+  .goal-marker .sub {
+    margin-top: 2px;
+    font-size: 10px;
+    color: #ffd76a;
+    letter-spacing: 0.1em;
+    text-shadow: 0 0 8px rgba(255,215,106,0.6);
+  }
+  /* right panel */
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .panel h2 {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    color: #7c4fd6;
+    text-transform: uppercase;
+  }
+  .card {
+    background: linear-gradient(180deg, rgba(30, 16, 60, 0.6), rgba(10, 6, 22, 0.6));
+    border: 1px solid rgba(124, 79, 214, 0.3);
+    border-radius: 14px;
+    padding: 14px;
+  }
+  .bet-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .bet-row .label { font-size: 10px; letter-spacing: 0.18em; color: #8b79c9; text-transform: uppercase; }
+  .bet-row .amt { font-size: 22px; font-weight: 700; color: #fff; letter-spacing: 0.02em; }
+  .bet-row .eth { font-size: 12px; color: #8b79c9; margin-left: 6px; }
+  .targets {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .target {
+    display: grid;
+    grid-template-columns: 74px 1fr 92px;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: rgba(16, 10, 36, 0.6);
+    border: 1px solid rgba(124, 79, 214, 0.2);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .target:hover { border-color: rgba(124, 79, 214, 0.45); }
+  .target.selected {
+    background: linear-gradient(90deg, rgba(255, 215, 106, 0.18), rgba(124, 79, 214, 0.25));
+    border-color: #ffd76a;
+    box-shadow: 0 0 0 1px rgba(255, 215, 106, 0.25), 0 8px 20px rgba(255, 215, 106, 0.12);
+  }
+  .target .mult {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+  }
+  .target.selected .mult { color: #ffd76a; }
+  .target .bar-wrap {
+    position: relative;
+    height: 6px;
+    background: rgba(124, 79, 214, 0.12);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .target .bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, #7c4fd6, #c8aef5);
+    border-radius: 3px;
+  }
+  .target.selected .bar {
+    background: linear-gradient(90deg, #ffd76a, #fff6c8);
+  }
+  .target .prob {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: #cdbefa;
+  }
+  .target.selected .prob { color: #fff; }
+  .target .prob .sub {
+    display: block;
+    font-size: 9px;
+    color: #7c6dad;
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+  .fire-btn {
+    width: 100%;
+    padding: 16px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffd76a 0%, #e0a020 100%);
+    color: #1a0a00;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+    box-shadow: 0 10px 30px rgba(255, 215, 106, 0.3);
+  }
+  .summary {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .summary .box {
+    background: rgba(16, 10, 36, 0.6);
+    border: 1px solid rgba(124, 79, 214, 0.2);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .summary .k { font-size: 9px; letter-spacing: 0.18em; color: #8b79c9; text-transform: uppercase; }
+  .summary .v { font-size: 18px; font-weight: 700; color: #fff; margin-top: 2px; }
+  .summary .win { color: #7fffa8; }
+  .summary .bust { color: #ff6a8a; }
+  .note {
+    font-size: 11px;
+    color: #8b79c9;
+    line-height: 1.55;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="scene-wrap">
+    <canvas id="scene" width="760" height="720"></canvas>
+
+    <div class="hud-top">
+      <span class="pill">INK SQUID · <b>ink sepolia</b></span>
+      <span class="pill">RTP <b>92.8%</b> · provably fair</span>
+    </div>
+
+    <!-- Goal marker overlay positioned above squid -->
+    <div class="goal-marker" style="left: 340px; top: 95px;">
+      <div class="sub">YOUR TARGET</div>
+      <div class="badge">2.00×</div>
+      <div class="arrow"></div>
+    </div>
+
+    <div class="hud-bottom">
+      <span class="chip">BET <span class="v">0.01 ETH</span></span>
+      <span class="chip">SEED <span class="v">0x7a…e42c</span></span>
+      <span class="chip" style="margin-left: auto;">BALANCE <span class="v">0.284 ETH</span></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="card">
+      <div class="bet-row">
+        <span class="label">your bet</span>
+        <span><span class="amt">0.01</span><span class="eth">ETH</span></span>
+      </div>
+    </div>
+
+    <h2>pick your target</h2>
+    <div class="targets" id="targets"></div>
+
+    <div class="summary">
+      <div class="box">
+        <div class="k">if you hit 2.00×</div>
+        <div class="v win">+0.0200 ETH</div>
+      </div>
+      <div class="box">
+        <div class="k">if you miss</div>
+        <div class="v bust">−0.01 ETH</div>
+      </div>
+    </div>
+
+    <button class="fire-btn">LAUNCH THE SQUID</button>
+
+    <div class="note">
+      Pick a target multiplier. If the on-chain roll lands on or above your target, you hit it — paid at the target, not the roll. Higher target = rarer hit, bigger payout. One decision, one result.
+    </div>
+  </div>
+</div>
+
+<script>
+// ── art primitives copied from src/lib/gameArt.ts ──
+function drawChest(ctx, x, y, frame, tier) {
+  const bob = Math.sin(frame * 0.12 + x * 0.03) * 2.2;
+  const cy = y + bob;
+  const pal = tier === 3 ? { wood:["#3a1858","#1a0830"], trim:"#7fe3ff", glow:"rgba(127,227,255,0.65)" }
+          : tier === 2 ? { wood:["#7a4a20","#3a2410"], trim:"#ffd76a", glow:"rgba(255,215,106,0.55)" }
+          : tier === 1 ? { wood:["#7a4a20","#3a2410"], trim:"#cfd8dc", glow:"rgba(207,216,220,0.4)" }
+          :              { wood:["#7a4a20","#3a2410"], trim:"#b07a3a", glow:"rgba(255,180,100,0.3)" };
+  const w=24, hBody=13, hLid=9;
+  const left=x-w/2, right=x+w/2;
+  const lidTop=cy-(hBody+hLid)/2, seam=lidTop+hLid, bottom=seam+hBody;
+  const cornerR=4;
+  const haloR = tier===3?26: tier===2?20: 16;
+  const halo = ctx.createRadialGradient(x,cy,1,x,cy,haloR);
+  halo.addColorStop(0,pal.glow); halo.addColorStop(1,pal.glow.replace(/[\d.]+\)$/,"0)"));
+  ctx.fillStyle=halo; ctx.beginPath(); ctx.arc(x,cy,haloR,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="rgba(0,0,0,0.25)";
+  ctx.beginPath(); ctx.ellipse(x,bottom+2,w*0.45,2,0,0,Math.PI*2); ctx.fill();
+  const body=ctx.createLinearGradient(0,seam,0,bottom);
+  body.addColorStop(0,pal.wood[0]); body.addColorStop(1,pal.wood[1]);
+  ctx.fillStyle=body;
+  ctx.beginPath();
+  ctx.moveTo(left+cornerR,seam);
+  ctx.lineTo(right-cornerR,seam);
+  ctx.quadraticCurveTo(right,seam,right,seam+cornerR);
+  ctx.lineTo(right,bottom-cornerR);
+  ctx.quadraticCurveTo(right,bottom,right-cornerR,bottom);
+  ctx.lineTo(left+cornerR,bottom);
+  ctx.quadraticCurveTo(left,bottom,left,bottom-cornerR);
+  ctx.lineTo(left,seam+cornerR);
+  ctx.quadraticCurveTo(left,seam,left+cornerR,seam);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle=pal.wood[0];
+  ctx.beginPath();
+  ctx.moveTo(left,seam); ctx.lineTo(left,lidTop+3);
+  ctx.bezierCurveTo(left+2,lidTop-4,right-2,lidTop-4,right,lidTop+3);
+  ctx.lineTo(right,seam); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=pal.trim;
+  ctx.fillRect(left+1,seam-1,w-2,2);
+  ctx.beginPath();
+  ctx.moveTo(x-1.5,seam);
+  ctx.bezierCurveTo(x-1.5,lidTop,x+1.5,lidTop,x+1.5,seam);
+  ctx.lineTo(x-1.5,seam); ctx.fill();
+  ctx.fillStyle=pal.trim;
+  ctx.beginPath(); ctx.arc(x,seam+1,2.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="#0a0810"; ctx.fillRect(x-0.7,seam+0.5,1.4,1.4);
+  ctx.fillStyle="rgba(255,255,255,0.18)";
+  ctx.beginPath(); ctx.ellipse(x-3,lidTop+1.5,w*0.28,1.6,-0.3,0,Math.PI*2); ctx.fill();
+}
+
+function drawDroplet(ctx,x,y,r,frame){
+  const yy = y + Math.sin(frame*0.15)*3;
+  const halo = ctx.createRadialGradient(x,yy,2,x,yy,r*2.4);
+  halo.addColorStop(0,"rgba(180,140,255,0.55)");
+  halo.addColorStop(1,"rgba(180,140,255,0)");
+  ctx.fillStyle=halo; ctx.beginPath(); ctx.arc(x,yy,r*2.4,0,Math.PI*2); ctx.fill();
+  ctx.save(); ctx.translate(x,yy);
+  const body=ctx.createRadialGradient(-3,-4,1,0,0,r);
+  body.addColorStop(0,"#6a3fd0"); body.addColorStop(0.6,"#2a1060"); body.addColorStop(1,"#0a0224");
+  ctx.fillStyle=body;
+  ctx.beginPath();
+  ctx.moveTo(0,-r*1.25);
+  ctx.bezierCurveTo(r*1.05,-r*0.2,r,r,0,r);
+  ctx.bezierCurveTo(-r,r,-r*1.05,-r*0.2,0,-r*1.25);
+  ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,0.7)";
+  ctx.beginPath(); ctx.ellipse(-r*0.3,-r*0.3,r*0.22,r*0.38,-0.3,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawSquid(ctx, cx, cy, frame) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const r = 22;
+  // glow
+  const glow = ctx.createRadialGradient(0,0,2,0,0,r*2.6);
+  glow.addColorStop(0,"rgba(120,200,255,0.22)");
+  glow.addColorStop(1,"rgba(120,200,255,0)");
+  ctx.fillStyle=glow; ctx.beginPath(); ctx.arc(0,0,r*2.6,0,Math.PI*2); ctx.fill();
+  ctx.rotate(-0.15);
+  // shadow
+  ctx.fillStyle="rgba(0,0,0,0.2)";
+  ctx.beginPath(); ctx.ellipse(0,r+3,r+2,2.5,0,0,Math.PI*2); ctx.fill();
+  const mantleLen=r+9, mantleH=r-2;
+  const waveT=frame*0.2;
+  const armBaseX=-mantleLen*0.38;
+  const arms=8;
+  for(let i=0;i<arms;i++){
+    const row=(i-(arms-1)/2)/arms;
+    const yStart=row*(mantleH*1.1);
+    const len=18+Math.abs(row)*5;
+    ctx.strokeStyle="#4a2a9c"; ctx.lineWidth=3; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(armBaseX,yStart);
+    for(let s=1;s<=5;s++){
+      const t=s/5;
+      ctx.lineTo(armBaseX-t*len, yStart+Math.sin(waveT+i*0.7+t*3)*4*t);
+    }
+    ctx.stroke();
+    ctx.strokeStyle="#8e67e0"; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(armBaseX,yStart);
+    for(let s=1;s<=5;s++){
+      const t=s/5;
+      ctx.lineTo(armBaseX-t*len, yStart+Math.sin(waveT+i*0.7+t*3)*4*t);
+    }
+    ctx.stroke();
+  }
+  // long feeding arms
+  for(const sign of [-1,1]){
+    const y0=sign*mantleH*0.5;
+    ctx.strokeStyle="#2a1358"; ctx.lineWidth=2.5; ctx.lineCap="round";
+    ctx.beginPath(); ctx.moveTo(armBaseX,y0);
+    let lx=armBaseX, ly=y0;
+    for(let s=1;s<=6;s++){
+      const t=s/6;
+      lx=armBaseX-t*28;
+      ly=y0+Math.sin(waveT*1.1+t*4+sign)*5*t;
+      ctx.lineTo(lx,ly);
+    }
+    ctx.stroke();
+    ctx.fillStyle="#7c4fd6";
+    ctx.beginPath(); ctx.ellipse(lx,ly,3.2,2.2,0,0,Math.PI*2); ctx.fill();
+  }
+  // fins
+  ctx.fillStyle="#4a2a9c";
+  ctx.beginPath();
+  ctx.moveTo(-mantleLen*0.15,-mantleH*0.9);
+  ctx.quadraticCurveTo(-mantleLen*0.55,-mantleH-6,-mantleLen*0.45,-mantleH*0.6);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-mantleLen*0.15,mantleH*0.9);
+  ctx.quadraticCurveTo(-mantleLen*0.55,mantleH+6,-mantleLen*0.45,mantleH*0.6);
+  ctx.closePath(); ctx.fill();
+  // mantle
+  const mantle = ctx.createLinearGradient(0,-mantleH,0,mantleH);
+  mantle.addColorStop(0,"#c8aef5");
+  mantle.addColorStop(0.55,"#7c4fd6");
+  mantle.addColorStop(1,"#311766");
+  ctx.fillStyle=mantle;
+  ctx.beginPath();
+  ctx.moveTo(mantleLen,0);
+  ctx.bezierCurveTo(mantleLen*0.6,-mantleH,-mantleLen*0.3,-mantleH,-mantleLen*0.4,0);
+  ctx.bezierCurveTo(-mantleLen*0.3,mantleH,mantleLen*0.6,mantleH,mantleLen,0);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,0.25)";
+  ctx.beginPath(); ctx.ellipse(mantleLen*0.1,-mantleH*0.55,mantleLen*0.45,mantleH*0.22,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle="rgba(255,210,230,0.45)";
+  ctx.beginPath();
+  ctx.arc(mantleLen*0.1,mantleH*0.5,2.5,0,Math.PI*2);
+  ctx.arc(-mantleLen*0.15,mantleH*0.45,2,0,Math.PI*2);
+  ctx.fill();
+  const eyeY=-mantleH*0.15;
+  for(const ex of [mantleLen*0.4,mantleLen*0.15]){
+    ctx.fillStyle="#fff";
+    ctx.beginPath(); ctx.arc(ex,eyeY,5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#0a0320";
+    ctx.beginPath(); ctx.arc(ex+1,eyeY+0.5,2.6,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#fff";
+    ctx.beginPath(); ctx.arc(ex+1.8,eyeY-0.8,1,0,Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle="rgba(255,150,180,0.4)";
+  ctx.beginPath(); ctx.ellipse(mantleLen*0.3,mantleH*0.25,3.5,1.8,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+// ── scene composition ──
+const canvas = document.getElementById("scene");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const frame = 42; // fixed frame for static screenshot
+
+// deep-ocean sky gradient
+const sky = ctx.createLinearGradient(0, 0, 0, H);
+sky.addColorStop(0, "#0a1738");
+sky.addColorStop(0.4, "#141a4a");
+sky.addColorStop(0.85, "#281552");
+sky.addColorStop(1, "#050215");
+ctx.fillStyle = sky;
+ctx.fillRect(0, 0, W, H);
+
+// light shafts
+for (let i = 0; i < 5; i++) {
+  const x = (W / 5) * i + 60;
+  const g = ctx.createLinearGradient(x, 0, x + 60, H);
+  g.addColorStop(0, "rgba(200, 230, 255, 0.08)");
+  g.addColorStop(1, "rgba(200, 230, 255, 0)");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x - 40, 0);
+  ctx.lineTo(x + 40, 0);
+  ctx.lineTo(x + 120, H);
+  ctx.lineTo(x - 120, H);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// bubbles
+for (let i = 0; i < 30; i++) {
+  const bx = (i * 73 + 40) % W;
+  const by = (i * 131 + 20) % H;
+  const br = 1 + (i % 4);
+  ctx.fillStyle = `rgba(200, 230, 255, ${0.08 + (i % 3) * 0.04})`;
+  ctx.beginPath();
+  ctx.arc(bx, by, br, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// distant kelp silhouettes
+for (let i = 0; i < 6; i++) {
+  const kx = i * 140 + 40;
+  ctx.strokeStyle = "rgba(80, 40, 120, 0.4)";
+  ctx.lineWidth = 6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(kx, H);
+  for (let s = 1; s <= 8; s++) {
+    const t = s / 8;
+    ctx.lineTo(kx + Math.sin(t * 4 + i) * 8, H - t * 120);
+  }
+  ctx.stroke();
+}
+
+// ── the path/ladder: target multipliers floating as chest zones ──
+// arrange from bottom (easy, close) to top (rare, far)
+const targets = [
+  { mult: 1.05, tier: 0, hit: 0.884, y: 620 },
+  { mult: 1.20, tier: 0, hit: 0.773, y: 540 },
+  { mult: 1.50, tier: 1, hit: 0.619, y: 460 },
+  { mult: 2.00, tier: 1, hit: 0.464, y: 380 }, // SELECTED
+  { mult: 3.00, tier: 2, hit: 0.309, y: 300 },
+  { mult: 5.00, tier: 2, hit: 0.186, y: 220 },
+  { mult: 10.0, tier: 3, hit: 0.093, y: 140 },
+  { mult: 25.0, tier: 3, hit: 0.037, y: 80 },
+];
+const selectedMult = 2.00;
+const chestX = 580;
+
+// draw faint rope/guide line from squid up through the chests
+ctx.strokeStyle = "rgba(124, 79, 214, 0.22)";
+ctx.lineWidth = 1.5;
+ctx.setLineDash([4, 6]);
+ctx.beginPath();
+ctx.moveTo(310, 560);
+ctx.bezierCurveTo(380, 480, 500, 350, chestX, 60);
+ctx.stroke();
+ctx.setLineDash([]);
+
+// draw chests at each target position
+for (const t of targets) {
+  drawChest(ctx, chestX, t.y, frame, t.tier);
+  // label next to chest
+  const isSel = Math.abs(t.mult - selectedMult) < 0.001;
+  ctx.font = isSel ? "700 18px -apple-system, Segoe UI, sans-serif" : "600 14px -apple-system, Segoe UI, sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  if (isSel) {
+    // highlight ring around selected chest
+    ctx.strokeStyle = "#ffd76a";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(chestX, t.y, 22, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowColor = "rgba(255,215,106,0.8)";
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = "#ffd76a";
+  } else {
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#cdbefa";
+  }
+  const label = t.mult.toFixed(t.mult < 10 ? 2 : 0) + "×";
+  ctx.fillText(label, chestX + 22, t.y);
+  ctx.shadowBlur = 0;
+  // hit % small
+  ctx.font = "500 10px ui-monospace, monospace";
+  ctx.fillStyle = isSel ? "rgba(255,215,106,0.8)" : "rgba(139, 121, 201, 0.7)";
+  ctx.fillText((t.hit * 100).toFixed(1) + "% hit", chestX + 22, t.y + 14);
+}
+
+// decorative ink droplets scattered
+drawDroplet(ctx, 180, 180, 7, frame);
+drawDroplet(ctx, 120, 400, 6, frame + 20);
+drawDroplet(ctx, 240, 520, 8, frame + 10);
+drawDroplet(ctx, 440, 200, 6, frame + 33);
+drawDroplet(ctx, 680, 400, 7, frame + 15);
+
+// squid (launcher position)
+drawSquid(ctx, 260, 570, frame);
+
+// small "LAUNCH" platform/arrow under squid
+ctx.fillStyle = "rgba(10, 6, 28, 0.5)";
+ctx.beginPath();
+ctx.ellipse(260, 615, 38, 6, 0, 0, Math.PI * 2);
+ctx.fill();
+ctx.strokeStyle = "rgba(255, 215, 106, 0.5)";
+ctx.lineWidth = 1.5;
+ctx.setLineDash([3, 4]);
+ctx.beginPath();
+ctx.ellipse(260, 615, 38, 6, 0, 0, Math.PI * 2);
+ctx.stroke();
+ctx.setLineDash([]);
+
+// ── right panel: render target list ──
+const panel = document.getElementById("targets");
+const targetsPanel = [
+  { mult: "1.05×", hit: 88.4, pct: 88 },
+  { mult: "1.20×", hit: 77.3, pct: 77 },
+  { mult: "1.50×", hit: 61.9, pct: 62 },
+  { mult: "2.00×", hit: 46.4, pct: 46, selected: true },
+  { mult: "3.00×", hit: 30.9, pct: 31 },
+  { mult: "5.00×", hit: 18.6, pct: 19 },
+  { mult: "10.0×", hit: 9.3,  pct: 9  },
+  { mult: "25.0×", hit: 3.7,  pct: 4  },
+];
+panel.innerHTML = targetsPanel.map(t => `
+  <div class="target ${t.selected ? "selected" : ""}">
+    <span class="mult">${t.mult}</span>
+    <div class="bar-wrap"><div class="bar" style="width:${t.pct}%;"></div></div>
+    <span class="prob">${t.hit.toFixed(1)}%<span class="sub">HIT CHANCE</span></span>
+  </div>
+`).join("");
+</script>
+</body>
+</html>
