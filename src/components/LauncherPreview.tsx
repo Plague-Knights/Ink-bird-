@@ -37,11 +37,22 @@ export function LauncherPreview() {
     for (let i = 0; i < 12; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
     for (let i = 0; i < 12; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
 
+    // Procedural rocks + reefs — different every mount so the seabed
+    // feels alive instead of identical-every-load. Seeded so a single
+    // mount renders consistent across frames, but each reload = new
+    // layout. When we wire this into the real game, the seed will come
+    // from the round commit so the layout is provably tied to the roll.
+    const seed = (Date.now() & 0xffff) | 1;
+    const rocks = generateRocks(seed);
+    const reefs = generateReefs(seed * 7919);
+    const creatures = generateCreatures(seed * 31337);
+    const midAirFish = generateMidAirFish(seed * 11117);
+
     let raf = 0;
     let frame = 0;
     const tick = () => {
       frame++;
-      render(ctx, bubbles, weeds, frame);
+      render(ctx, bubbles, weeds, rocks, reefs, creatures, midAirFish, frame);
       raf = requestAnimationFrame(tick);
     };
     tick();
@@ -81,37 +92,135 @@ const DISTANCE_MARKERS = [
   { distance: "400m", frac: 0.97 },
 ];
 
-// Rocks scattered along the seabed. Each rock is a bust zone — if the
-// squid lands on one, the play busts. Mid-air contact is cosmetic;
-// only the final landing surface determines the outcome. The rolled
-// landing distance decides whether you're on open sand or on a rock
-// cluster, so the visible rocks ARE the visible house edge.
-const ROCKS: Rock[] = [
-  { x: 0.07, w: 40, h: 22 },   // right after cannon — classic "dud" zone
-  { x: 0.20, w: 28, h: 14 },
-  { x: 0.21, w: 20, h: 10 },   // cluster with the 0.20 rock
-  { x: 0.33, w: 36, h: 18 },
-  { x: 0.57, w: 32, h: 16 },
-  { x: 0.58, w: 18, h: 8 },
-  { x: 0.69, w: 46, h: 24 },   // big jagged cluster mid-distance
-  { x: 0.71, w: 22, h: 12 },
-  { x: 0.83, w: 28, h: 14 },
-  { x: 0.92, w: 38, h: 20 },   // pre-jackpot rocks
+// Payout reference legend at the top of the scene — shows the
+// distance → multiplier curve so the player knows where the money is
+// without needing labels plastered across every rock/reef on the
+// seabed. The landing point is the only place a multiplier shows up
+// in the play area; this top bar is the reference key.
+const PAYOUT_LEGEND = [
+  { mult: "0×",    distance: "< 10m",  color: "#ff5a5a" },
+  { mult: "0.7×",  distance: "< 40m",  color: "#ff9b5a" },
+  { mult: "0.9×",  distance: "< 80m",  color: "#ffb464" },
+  { mult: "1.05×", distance: "< 120m", color: "#cfe7ff" },
+  { mult: "1.2×",  distance: "< 200m", color: "#cfd8dc" },
+  { mult: "1.8×",  distance: "< 280m", color: "#ffd76a" },
+  { mult: "5×",    distance: "300m+",  color: "#7fe3ff" },
 ];
 
-// Snapshot bird position — mid-flight for dramatic screenshot. Fraction
-// along the arc (0 = muzzle, 1 = landing point).
-const BIRD_FRAC = 0.55;
-// Where the squid will land for the snapshot (fraction of strip width).
-// 0.62 = 200m marker = a "good" distance.
-const LAND_FRAC = 0.62;
-const LAND_MULT = 1.8;
-const LAND_DISTANCE = "200m";
+type ReefCoral = { x: number; h: number; color: string; sway: number };
+type Reef = { x: number; wBase: number; corals: ReefCoral[] };
+type Creature = { x: number; kind: "fish" | "squid"; color: string; size: number; flip: boolean };
+type MidAirFish = { x: number; y: number; color: string; size: number; phase: number; flip: boolean };
+
+// Snapshot trajectory — includes a bounce off a rock mid-flight.
+// First arc = muzzle → bounce point. Second arc = bounce → landing.
+// BIRD_FRAC is along the SECOND arc for the screenshot moment.
+const BOUNCE_FRAC = 0.36;      // where squid first hits the seabed
+const LAND_FRAC   = 0.68;      // final landing spot after the bounce
+const BIRD_FRAC   = 0.45;      // squid position along the 2nd arc (post-bounce)
+const LAND_MULT = 1.2;
+const LAND_DISTANCE = "260m";
+
+// Mulberry32 PRNG — same generator used in simulate.ts. Gives us a
+// deterministic stream of "random" numbers from a single seed.
+function mulberry32(seed: number) {
+  let t = seed >>> 0;
+  return () => {
+    t = (t + 0x6D2B79F5) >>> 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateRocks(seed: number): Rock[] {
+  const rand = mulberry32(seed);
+  const rocks: Rock[] = [];
+  // 9–14 rocks scattered across the strip with clustering bias
+  const count = 9 + Math.floor(rand() * 6);
+  for (let i = 0; i < count; i++) {
+    // Cluster around seed-chosen hotspots so rocks group naturally
+    // instead of being evenly spaced. Each rock picks a base band then
+    // jitters within it.
+    const band = rand();
+    rocks.push({
+      x: Math.min(0.98, Math.max(0.04, band + (rand() - 0.5) * 0.05)),
+      w: 18 + rand() * 32,
+      h: 9 + rand() * 18,
+    });
+  }
+  return rocks.sort((a, b) => a.x - b.x);
+}
+
+function generateReefs(seed: number): Reef[] {
+  const rand = mulberry32(seed);
+  const reefs: Reef[] = [];
+  // 3–5 reef structures — taller, more colorful, with coral branches
+  const count = 3 + Math.floor(rand() * 3);
+  for (let i = 0; i < count; i++) {
+    const corals: ReefCoral[] = [];
+    const coralCount = 4 + Math.floor(rand() * 5);
+    for (let j = 0; j < coralCount; j++) {
+      corals.push({
+        x: (rand() - 0.5) * 60,
+        h: 20 + rand() * 40,
+        color: rand() < 0.5
+          ? "#ff7aa8"
+          : rand() < 0.5 ? "#ff9b5a" : "#c88afe",
+        sway: rand() * Math.PI * 2,
+      });
+    }
+    reefs.push({
+      x: 0.15 + rand() * 0.8,
+      wBase: 50 + rand() * 40,
+      corals,
+    });
+  }
+  return reefs.sort((a, b) => a.x - b.x);
+}
+
+function generateCreatures(seed: number): Creature[] {
+  const rand = mulberry32(seed);
+  const creatures: Creature[] = [];
+  const count = 4 + Math.floor(rand() * 3);
+  for (let i = 0; i < count; i++) {
+    const isSquid = rand() < 0.4;
+    creatures.push({
+      x: 0.1 + rand() * 0.85,
+      kind: isSquid ? "squid" : "fish",
+      color: rand() < 0.5 ? "#ff7aa8" : rand() < 0.5 ? "#ffb464" : "#7fe3ff",
+      size: 0.8 + rand() * 0.5,
+      flip: rand() < 0.5,
+    });
+  }
+  return creatures.sort((a, b) => a.x - b.x);
+}
+
+function generateMidAirFish(seed: number): MidAirFish[] {
+  const rand = mulberry32(seed);
+  const fish: MidAirFish[] = [];
+  const count = 5 + Math.floor(rand() * 4);
+  for (let i = 0; i < count; i++) {
+    fish.push({
+      x: 0.15 + rand() * 0.8,
+      y: 0.25 + rand() * 0.45, // fraction of mid-air height
+      color: rand() < 0.5 ? "#ff9b5a" : "#7fe3ff",
+      size: 0.7 + rand() * 0.4,
+      phase: rand() * Math.PI * 2,
+      flip: rand() < 0.5,
+    });
+  }
+  return fish;
+}
 
 function render(
   ctx: CanvasRenderingContext2D,
   bubbles: Bubble[],
   weeds: Weed[],
+  rocks: Rock[],
+  reefs: Reef[],
+  creatures: Creature[],
+  midAirFish: MidAirFish[],
   frame: number,
 ) {
   const W2 = PREVIEW_W, H2 = PREVIEW_H;
@@ -193,15 +302,37 @@ function render(
   ctx.fillStyle = "rgba(40,25,8,0.4)";
   ctx.fillRect(0, H2 - GROUND_H, W2, 2);
 
-  // ── Scatter rocks on the seabed — obstacles the squid can land on ──
+  // ── Scatter rocks + reefs on the seabed (procedural per mount) ──
   const stripStart = 150;
   const stripEnd = W2 - 40;
   const stripW = stripEnd - stripStart;
   const sandLevel = H2 - GROUND_H + 4;
 
-  for (const r of ROCKS) {
+  // Reefs first (they're taller and sit behind rocks visually)
+  for (const reef of reefs) {
+    const rx = stripStart + stripW * reef.x;
+    drawReef(ctx, rx, sandLevel, reef, frame);
+  }
+
+  for (const r of rocks) {
     const rx = stripStart + stripW * r.x;
     drawRock(ctx, rx, sandLevel, r.w, r.h, r.x);
+  }
+
+  // Bottom creatures (fish + small squids) — these are BOUNCE hazards,
+  // not bust hazards. Landing on one can send the squid further OR
+  // kill it on impact. Rocks = always bust, creatures = always bounce.
+  for (const c of creatures) {
+    const cx = stripStart + stripW * c.x;
+    drawBottomCreature(ctx, cx, sandLevel - 6, c, frame);
+  }
+
+  // Mid-air swimming fish — the squid can glance off these in flight
+  // and get carried further. Pure good-luck bounces.
+  for (const f of midAirFish) {
+    const fx = stripStart + stripW * f.x + Math.sin(frame * 0.02 + f.phase) * 20;
+    const fy = 60 + (H2 - GROUND_H - 120) * f.y + Math.sin(frame * 0.03 + f.phase) * 8;
+    drawMidAirFish(ctx, fx, fy, f, frame);
   }
 
   // ── Distance markers along the sand (the only labels) ──
@@ -280,44 +411,160 @@ function render(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // ── TRAJECTORY dotted arc (mid-air is always safe) ──
-  const midX = (muzzleX + landX) / 2;
-  const apex = Math.min(muzzleY, landY) - 180;
+  // ── TRAJECTORY: two arcs joined at the bounce point ──
+  // Arc A: muzzle → bounce (full-height apex, full energy)
+  // Arc B: bounce → landing  (lower apex, reduced energy post-bounce)
+  const bounceX = stripStart + stripW * BOUNCE_FRAC;
+  const bounceY = sandLevel - 4;
 
+  // Arc A control point
+  const aMidX = (muzzleX + bounceX) / 2;
+  const aApex = Math.min(muzzleY, bounceY) - 200;
+  // Arc B control point — lower apex (post-bounce energy loss)
+  const bMidX = (bounceX + landX) / 2;
+  const bApex = Math.min(bounceY, landY) - 110;
+
+  function arcPos(t: number, x0: number, y0: number, mx: number, ma: number, x1: number, y1: number) {
+    const x = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * mx + t * t * x1;
+    const y = (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * ma + t * t * y1;
+    return { x, y };
+  }
+  function arcSlope(t: number, x0: number, y0: number, mx: number, ma: number, x1: number, y1: number) {
+    const dx = 2 * (1 - t) * (mx - x0) + 2 * t * (x1 - mx);
+    const dy = 2 * (1 - t) * (ma - y0) + 2 * t * (y1 - ma);
+    return Math.atan2(dy, dx);
+  }
+
+  // Dotted preview of arc A (pre-bounce, dimmed since it already happened)
   ctx.save();
   ctx.setLineDash([4, 6]);
-  ctx.strokeStyle = "rgba(127,227,255,0.35)";
-  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = "rgba(127,227,255,0.22)";
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
   for (let t = 0; t <= 1; t += 0.02) {
-    const x = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
-    const y = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
-    if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    const p = arcPos(t, muzzleX, muzzleY, aMidX, aApex, bounceX, bounceY);
+    if (t === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+  // Arc B — the post-bounce flight, brighter since that's the active one
+  ctx.strokeStyle = "rgba(127,227,255,0.5)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  for (let t = 0; t <= 1; t += 0.02) {
+    const p = arcPos(t, bounceX, bounceY, bMidX, bApex, landX, landY);
+    if (t === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
   }
   ctx.stroke();
   ctx.restore();
 
-  // Squid mid-flight
-  const t = BIRD_FRAC;
-  const bx = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
-  const by = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
-  const bird: Bird = { x: bx, y: by, vy: 0, r: 18 };
-  const slope = Math.atan2(
-    2 * (1 - t) * (apex - muzzleY) + 2 * t * (landY - apex),
-    2 * (1 - t) * (midX - muzzleX) + 2 * t * (landX - midX),
-  );
-  drawBird(ctx, bird, slope * 1.5, frame * 0.6, frame);
-
-  // Motion trail behind squid
-  for (let i = 1; i <= 6; i++) {
-    const tt = Math.max(0, t - i * 0.025);
-    const tx = (1 - tt) * (1 - tt) * muzzleX + 2 * (1 - tt) * tt * midX + tt * tt * landX;
-    const ty = (1 - tt) * (1 - tt) * muzzleY + 2 * (1 - tt) * tt * apex + tt * tt * landY;
-    ctx.fillStyle = `rgba(127, 227, 255, ${0.25 - i * 0.035})`;
+  // ── Bounce impact — a startled fish at the seabed kicks the squid up ──
+  // Draw a conspicuous bouncer fish at the bounce point
+  ctx.save();
+  drawBottomCreature(ctx, bounceX, bounceY - 4, {
+    x: 0, kind: "fish", color: "#ffd76a", size: 1.3, flip: true,
+  }, frame);
+  // Shockwave ring at seabed level
+  const shockR = 24 + Math.sin(frame * 0.2) * 2;
+  ctx.strokeStyle = "rgba(255, 180, 80, 0.7)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(bounceX, bounceY, shockR, 5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  // Sand/debris puffs around the bouncer at ground level
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI - Math.PI;
+    const d = 16 + (i % 3) * 4;
+    const px = bounceX + Math.cos(ang) * d;
+    const py = bounceY - 4 + Math.abs(Math.sin(ang)) * -6;
+    ctx.fillStyle = i % 2 === 0 ? "rgba(213, 180, 124, 0.7)" : "rgba(90, 60, 30, 0.55)";
     ctx.beginPath();
-    ctx.arc(tx, ty, 6 - i * 0.6, 0, Math.PI * 2);
+    ctx.arc(px, py, 1.8 - (i % 2) * 0.4, 0, Math.PI * 2);
     ctx.fill();
   }
+  // "BOUNCED OFF FISH" label just above the bouncer, not floating high
+  const labelY = bounceY - 34;
+  ctx.fillStyle = "rgba(2,24,48,0.9)";
+  roundRect(ctx, bounceX - 70, labelY, 140, 20, 5); ctx.fill();
+  ctx.strokeStyle = "rgba(255, 180, 80, 0.75)";
+  ctx.lineWidth = 1;
+  roundRect(ctx, bounceX - 70, labelY, 140, 20, 5); ctx.stroke();
+  ctx.fillStyle = "#ffb458";
+  ctx.font = 'bold 10px "Rubik", sans-serif';
+  ctx.textAlign = "center";
+  ctx.fillText("BOUNCED OFF FISH", bounceX, labelY + 13);
+  // Tiny pointer triangle down to the fish
+  ctx.fillStyle = "rgba(2,24,48,0.9)";
+  ctx.beginPath();
+  ctx.moveTo(bounceX - 5, labelY + 20);
+  ctx.lineTo(bounceX + 5, labelY + 20);
+  ctx.lineTo(bounceX, labelY + 26);
+  ctx.closePath();
+  ctx.fill();
+  ctx.textAlign = "start";
+  ctx.restore();
+
+  // ── Squid mid-flight along arc B ──
+  const t = BIRD_FRAC;
+  const p = arcPos(t, bounceX, bounceY, bMidX, bApex, landX, landY);
+  const bird: Bird = { x: p.x, y: p.y, vy: 0, r: 18 };
+  const slope = arcSlope(t, bounceX, bounceY, bMidX, bApex, landX, landY);
+  drawBird(ctx, bird, slope * 1.5, frame * 0.6, frame);
+
+  // Motion trail behind squid (along arc B)
+  for (let i = 1; i <= 6; i++) {
+    const tt = Math.max(0, t - i * 0.025);
+    const tp = arcPos(tt, bounceX, bounceY, bMidX, bApex, landX, landY);
+    ctx.fillStyle = `rgba(127, 227, 255, ${0.25 - i * 0.035})`;
+    ctx.beginPath();
+    ctx.arc(tp.x, tp.y, 6 - i * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ── PAYOUT LEGEND across the top — the reference key for distances ──
+  const legY = 110;
+  const legStart = 240;
+  const legEnd = W2 - 240;
+  const legW = legEnd - legStart;
+  // Backing bar
+  ctx.fillStyle = "rgba(2,24,48,0.55)";
+  roundRect(ctx, legStart - 14, legY - 14, legW + 28, 52, 10);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(127,227,255,0.2)";
+  ctx.lineWidth = 1;
+  roundRect(ctx, legStart - 14, legY - 14, legW + 28, 52, 10);
+  ctx.stroke();
+  // Header
+  ctx.fillStyle = "#7b94b8";
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.textAlign = "left";
+  ctx.fillText("PAYOUT BY DISTANCE", legStart - 4, legY - 2);
+  // Chips + connecting line
+  ctx.strokeStyle = "rgba(127,227,255,0.25)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 4]);
+  ctx.beginPath();
+  ctx.moveTo(legStart, legY + 18);
+  ctx.lineTo(legEnd, legY + 18);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  PAYOUT_LEGEND.forEach((p, i) => {
+    const cx = legStart + (legW * i) / (PAYOUT_LEGEND.length - 1);
+    // Color dot
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(cx, legY + 18, 4, 0, Math.PI * 2);
+    ctx.fill();
+    // Multiplier label
+    ctx.fillStyle = p.color;
+    ctx.font = 'bold 13px "Rubik", sans-serif';
+    ctx.textAlign = "center";
+    ctx.fillText(p.mult, cx, legY + 10);
+    // Distance range below
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.fillText(p.distance, cx, legY + 34);
+  });
+  ctx.textAlign = "start";
 
   // ── HUD: FIRE button, BET, DISTANCE readout ──
   const fireX = 24, fireY = 24, fireW = 180, fireH = 64;
@@ -361,19 +608,10 @@ function render(
   ctx.fillStyle = "#7b94b8";
   ctx.font = '10px ui-monospace, monospace';
   ctx.textAlign = "center";
-  ctx.fillText("LANDING · DISTANCE · MULTIPLIER", drX, drY - 4);
+  ctx.fillText("BOUNCE · FINAL LANDING · MULTIPLIER", drX, drY - 4);
   ctx.fillStyle = "#ffd76a";
   ctx.font = 'bold 17px "Rubik", sans-serif';
-  ctx.fillText("OPEN SAND  ·  " + LAND_DISTANCE + "  →  " + LAND_MULT + "×", drX, drY + 18);
-
-  // Subtle hazard hint under the HUD
-  const hzY = drY + 38;
-  ctx.fillStyle = "rgba(2,24,48,0.6)";
-  roundRect(ctx, drX - 120, hzY, 240, 22, 6); ctx.fill();
-  ctx.fillStyle = "rgba(255, 140, 140, 0.85)";
-  ctx.font = '11px ui-monospace, monospace';
-  ctx.textAlign = "center";
-  ctx.fillText("◆ land on rock = bust  ·  land on sand = win", drX, hzY + 15);
+  ctx.fillText("FISH BOUNCE + LIVED  ·  " + LAND_DISTANCE + "  →  " + LAND_MULT + "×", drX, drY + 18);
 
   ctx.textAlign = "start";
 
@@ -691,6 +929,196 @@ function drawCannonballs(ctx: CanvasRenderingContext2D, cx: number, cy: number) 
     ctx.arc(bx - 1.2, by - 1.2, 1, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+/// Coral reef cluster — a base mound with colored coral branches.
+/// Decorative (reefs aren't bust zones on their own; rocks adjacent to
+/// the reef do the busting). Gives the seabed depth and variety.
+function drawReef(ctx: CanvasRenderingContext2D, cx: number, baseY: number, reef: Reef, frame: number) {
+  // Base mound — rounded bump
+  const moundH = 14;
+  const moundGrad = ctx.createLinearGradient(0, baseY - moundH, 0, baseY);
+  moundGrad.addColorStop(0, "#7a5a38");
+  moundGrad.addColorStop(1, "#3a2410");
+  ctx.fillStyle = moundGrad;
+  ctx.beginPath();
+  ctx.moveTo(cx - reef.wBase / 2, baseY);
+  ctx.quadraticCurveTo(cx - reef.wBase / 3, baseY - moundH, cx, baseY - moundH);
+  ctx.quadraticCurveTo(cx + reef.wBase / 3, baseY - moundH, cx + reef.wBase / 2, baseY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Coral branches sprouting from the mound
+  for (const coral of reef.corals) {
+    const kx = cx + coral.x;
+    const sway = Math.sin(frame * 0.03 + coral.sway) * 3;
+    // Main stem
+    ctx.strokeStyle = coral.color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(kx, baseY - 2);
+    ctx.quadraticCurveTo(kx + sway * 0.5, baseY - coral.h / 2, kx + sway, baseY - coral.h);
+    ctx.stroke();
+    // Side branches
+    for (let i = 0; i < 3; i++) {
+      const t = 0.35 + i * 0.2;
+      const by = baseY - coral.h * t;
+      const bxs = kx + sway * t * 0.5;
+      const dir = i % 2 === 0 ? 1 : -1;
+      ctx.beginPath();
+      ctx.moveTo(bxs, by);
+      ctx.quadraticCurveTo(bxs + dir * 4, by - 2, bxs + dir * 8, by - coral.h * 0.15);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    // Glow tip
+    const tipGlow = ctx.createRadialGradient(kx + sway, baseY - coral.h, 0, kx + sway, baseY - coral.h, 8);
+    tipGlow.addColorStop(0, coral.color + "88");
+    tipGlow.addColorStop(1, coral.color + "00");
+    ctx.fillStyle = tipGlow;
+    ctx.beginPath();
+    ctx.arc(kx + sway, baseY - coral.h, 8, 0, Math.PI * 2);
+    ctx.fill();
+    // Bud at tip
+    ctx.fillStyle = coral.color;
+    ctx.beginPath();
+    ctx.arc(kx + sway, baseY - coral.h, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/// Little fish or squid resting/swimming near the seabed — landing on
+/// one causes a bounce (squid can go further OR die on impact).
+function drawBottomCreature(ctx: CanvasRenderingContext2D, cx: number, cy: number, c: Creature, frame: number) {
+  if (c.kind === "fish") {
+    drawFishSprite(ctx, cx, cy, c.color, c.size, c.flip, frame + cx * 0.3);
+  } else {
+    drawSmallSquidSprite(ctx, cx, cy, c.color, c.size, frame + cx * 0.3);
+  }
+}
+
+function drawMidAirFish(ctx: CanvasRenderingContext2D, cx: number, cy: number, f: MidAirFish, frame: number) {
+  drawFishSprite(ctx, cx, cy, f.color, f.size, f.flip, frame + f.phase * 30);
+}
+
+/// Tiny stylized fish sprite — oval body, triangular tail, dot eye,
+/// tail flicks with frame for a little life. `flip` mirrors the
+/// facing direction so a shoal doesn't all point the same way.
+function drawFishSprite(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string, size: number, flip: boolean, frame: number) {
+  const L = 18 * size;
+  const H2 = 8 * size;
+  ctx.save();
+  ctx.translate(cx, cy);
+  if (flip) ctx.scale(-1, 1);
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  ctx.beginPath();
+  ctx.ellipse(0, H2 * 0.9, L * 0.5, 1.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Body gradient
+  const bodyGrad = ctx.createLinearGradient(0, -H2, 0, H2);
+  bodyGrad.addColorStop(0, lighten(color, 0.25));
+  bodyGrad.addColorStop(0.5, color);
+  bodyGrad.addColorStop(1, darken(color, 0.35));
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, L / 2, H2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Tail (flicks)
+  const tailFlick = Math.sin(frame * 0.3) * 2;
+  ctx.fillStyle = darken(color, 0.25);
+  ctx.beginPath();
+  ctx.moveTo(-L / 2 + 1, 0);
+  ctx.lineTo(-L / 2 - L * 0.35, -H2 * 0.8 + tailFlick);
+  ctx.lineTo(-L / 2 - L * 0.25, 0);
+  ctx.lineTo(-L / 2 - L * 0.35, H2 * 0.8 - tailFlick);
+  ctx.closePath();
+  ctx.fill();
+  // Top fin
+  ctx.fillStyle = darken(color, 0.15);
+  ctx.beginPath();
+  ctx.moveTo(-L * 0.15, -H2 * 0.9);
+  ctx.lineTo(L * 0.05, -H2 * 1.6);
+  ctx.lineTo(L * 0.2, -H2 * 0.9);
+  ctx.closePath();
+  ctx.fill();
+  // Belly highlight
+  ctx.fillStyle = "rgba(255,255,255,0.3)";
+  ctx.beginPath();
+  ctx.ellipse(0, H2 * 0.45, L * 0.35, H2 * 0.35, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Eye
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(L * 0.28, -H2 * 0.2, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#0a0320";
+  ctx.beginPath();
+  ctx.arc(L * 0.3, -H2 * 0.2, 1.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/// Smaller squid — simpler version of the player squid, suggests the
+/// player's kin hanging out at the bottom.
+function drawSmallSquidSprite(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string, size: number, frame: number) {
+  const r = 8 * size;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = "rgba(0,0,0,0.2)";
+  ctx.beginPath();
+  ctx.ellipse(0, r * 0.9, r * 1.1, 1.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Arms drifting down
+  ctx.strokeStyle = darken(color, 0.3);
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 5; i++) {
+    const t = (i - 2) / 4;
+    const wave = Math.sin(frame * 0.1 + i) * 3;
+    ctx.beginPath();
+    ctx.moveTo(t * r * 0.8, r * 0.3);
+    ctx.quadraticCurveTo(t * r * 1.1 + wave, r * 0.9, t * r * 1.3 + wave, r * 1.4);
+    ctx.stroke();
+  }
+  // Mantle
+  const mantle = ctx.createRadialGradient(0, 0, 1, 0, 0, r);
+  mantle.addColorStop(0, lighten(color, 0.3));
+  mantle.addColorStop(1, darken(color, 0.3));
+  ctx.fillStyle = mantle;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r, r * 1.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Eyes
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.arc(-r * 0.35, -r * 0.1, 2, 0, Math.PI * 2);
+  ctx.arc(r * 0.35, -r * 0.1, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#0a0320";
+  ctx.beginPath();
+  ctx.arc(-r * 0.33, -r * 0.08, 1, 0, Math.PI * 2);
+  ctx.arc(r * 0.37, -r * 0.08, 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function lighten(hex: string, amount: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return rgbToHex(r + (255 - r) * amount, g + (255 - g) * amount, b + (255 - b) * amount);
+}
+function darken(hex: string, amount: number): string {
+  const { r, g, b } = hexToRgb(hex);
+  return rgbToHex(r * (1 - amount), g * (1 - amount), b * (1 - amount));
+}
+function hexToRgb(hex: string) {
+  const h = hex.replace("#", "");
+  return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+}
+function rgbToHex(r: number, g: number, b: number) {
+  const c = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+  return `#${c(r)}${c(g)}${c(b)}`;
 }
 
 function drawCoiledRope(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
