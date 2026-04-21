@@ -8,7 +8,7 @@
 //     either clears the bar or busts (one input, one result)
 
 import { useEffect, useState } from "react";
-import { LauncherPreview } from "@/components/LauncherPreview";
+import { CannonGame } from "@/components/CannonGame";
 import { TargetPickPreview } from "@/components/TargetPickPreview";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +75,7 @@ export default function PreviewPage() {
           borderRadius: 16,
           padding: 18,
         }}>
-          {mode === "target" ? <TargetPickPreview /> : <LauncherPreview />}
+          {mode === "target" ? <TargetPickPreview /> : <CannonGame />}
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
