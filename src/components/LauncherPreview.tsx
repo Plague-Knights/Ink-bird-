@@ -1,15 +1,16 @@
 "use client";
 
-// Static visual preview of the Moonsheep-style launcher, reusing every
-// existing art asset (drawBird, drawPipe, drawChest, drawDroplet + the
-// ocean scene layers). No gameplay logic — just a snapshot of what the
-// layout would look like so we can get sign-off before wiring it up.
+// Static visual preview of the cannon-style launcher: one input (FIRE),
+// server rolls the outcome, distance-based multiplier. The further the
+// squid flies, the bigger the payout — zones are spaced wide along a
+// long landing strip with distance markers so the "distance = result"
+// reading is obvious. Uses the pipes-game ocean atmosphere.
 
 import { useEffect, useRef } from "react";
-import { W, H, GROUND_H, type Bird } from "@/lib/simulate";
+import { GROUND_H, type Bird } from "@/lib/simulate";
 import { drawBird, drawChest, drawDroplet } from "@/lib/gameArt";
 
-const PREVIEW_W = 960; // wider than the flappy layout so the landing strip reads
+const PREVIEW_W = 1160;
 const PREVIEW_H = 560;
 
 type Bubble = { x: number; y: number; r: number; tw: number };
@@ -22,20 +23,18 @@ export function LauncherPreview() {
     const c = canvasRef.current; if (!c) return;
     const ctx = c.getContext("2d"); if (!ctx) return;
 
-    // Static parallax for the mockup — fixed values so the layout is
-    // stable for a screenshot.
     const bubbles: Bubble[] = [];
-    for (let i = 0; i < 48; i++) {
+    for (let i = 0; i < 56; i++) {
       bubbles.push({
         x: (i * 97) % PREVIEW_W,
-        y: 30 + (i * 173) % (PREVIEW_H - GROUND_H - 60),
+        y: 30 + ((i * 173) % (PREVIEW_H - GROUND_H - 60)),
         r: 1.2 + ((i * 7) % 20) / 10,
         tw: i,
       });
     }
     const weeds: Weed[] = [];
-    for (let i = 0; i < 6; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
-    for (let i = 0; i < 6; i++) weeds.push({ layer: 1, x: i * 200 + 100, w: 180, h: 120 });
+    for (let i = 0; i < 7; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
+    for (let i = 0; i < 7; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
 
     let raf = 0;
     let frame = 0;
@@ -66,21 +65,27 @@ export function LauncherPreview() {
   );
 }
 
-// ─── LANDING STRIP CONFIG ────────────────────────────────────────────
-// Seven multiplier zones across the arc — same 7 buckets as the on-
-// chain curve. Shorter arc = lower multiplier; longer = bigger payout.
+// ─── LANDING ZONES (distance-based multiplier) ───────────────────────
+// Each zone is a spaced-out patch of seabed at increasing distance from
+// the cannon. frac = position along the strip (0 = just past cannon,
+// 1 = far end). Wider gaps between high-multiplier zones sell the
+// "go further, win more" reading. Probabilities match the on-chain
+// curve (8/15/30/30/14/2.5/0.5).
 const ZONES = [
-  { mult: 0,    label: "BUST", color: "#ff5a5a", frac: 0.12 }, //  8%
-  { mult: 0.7,  label: "0.7×", color: "#ff9b5a", frac: 0.20 }, // 15%
-  { mult: 0.9,  label: "0.9×", color: "#ffb464", frac: 0.30 }, // 30%
-  { mult: 1.05, label: "1.05×",color: "#cfe7ff", frac: 0.44 }, // 30%
-  { mult: 1.2,  label: "1.2×", color: "#cfd8dc", frac: 0.60 }, // 14%
-  { mult: 1.8,  label: "1.8×", color: "#ffd76a", frac: 0.78 }, //  2.5%
-  { mult: 5.0,  label: "5×",   color: "#7fe3ff", frac: 0.92 }, //  0.5%
+  { mult: 0,    label: "BUST",  distance:  "6m",  color: "#ff5a5a", frac: 0.04 },
+  { mult: 0.7,  label: "0.7×",  distance: "22m",  color: "#ff9b5a", frac: 0.16 },
+  { mult: 0.9,  label: "0.9×",  distance: "44m",  color: "#ffb464", frac: 0.30 },
+  { mult: 1.05, label: "1.05×", distance: "72m",  color: "#cfe7ff", frac: 0.46 },
+  { mult: 1.2,  label: "1.2×",  distance: "108m", color: "#cfd8dc", frac: 0.63 },
+  { mult: 1.8,  label: "1.8×",  distance: "156m", color: "#ffd76a", frac: 0.79 },
+  { mult: 5.0,  label: "5×",    distance: "220m", color: "#7fe3ff", frac: 0.95 },
 ];
 
-// Snapshot bird position — mid-flight for dramatic screenshot.
+// Snapshot bird position — mid-flight for dramatic screenshot. Fraction
+// along the arc (0 = muzzle, 1 = landing point).
 const BIRD_FRAC = 0.62;
+// Which zone the arc is targeting for the snapshot (1.2×).
+const TARGET_ZONE = 4;
 
 function render(
   ctx: CanvasRenderingContext2D,
@@ -91,7 +96,7 @@ function render(
   const W2 = PREVIEW_W, H2 = PREVIEW_H;
   ctx.clearRect(0, 0, W2, H2);
 
-  // Sky / ocean gradient (exact colors from AutoFlapper)
+  // ── Pipes-game ocean gradient ──
   const sky = ctx.createLinearGradient(0, 0, 0, H2 - GROUND_H);
   sky.addColorStop(0, "#7ad3e0");
   sky.addColorStop(0.25, "#2a9ac2");
@@ -110,8 +115,8 @@ function render(
   // Light shafts
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 7; i++) {
-    const baseX = ((i * 160 + frame * 0.4) % (W2 + 240)) - 120;
+  for (let i = 0; i < 9; i++) {
+    const baseX = ((i * 170 + frame * 0.4) % (W2 + 240)) - 120;
     ctx.fillStyle = "rgba(200, 230, 255, 0.05)";
     ctx.beginPath();
     ctx.moveTo(baseX, 0);
@@ -167,101 +172,133 @@ function render(
   ctx.fillStyle = "rgba(40,25,8,0.4)";
   ctx.fillRect(0, H2 - GROUND_H, W2, 2);
 
-  // ── LANDING STRIP (zone markers along the arc's landing line) ──
-  const stripY = H2 - GROUND_H - 4;
-  ctx.fillStyle = "rgba(255,255,255,0.05)";
-  ctx.fillRect(90, stripY - 12, W2 - 120, 14);
-  ZONES.forEach(z => {
-    const zx = 90 + (W2 - 120) * z.frac;
-    // tick mark
-    ctx.fillStyle = z.color;
-    ctx.fillRect(zx - 1, stripY - 14, 2, 14);
-    // label chip
-    ctx.fillStyle = "rgba(2,24,48,0.85)";
-    ctx.fillRect(zx - 28, stripY - 34, 56, 16);
-    ctx.strokeStyle = z.color;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(zx - 28, stripY - 34, 56, 16);
-    ctx.fillStyle = z.color;
-    ctx.font = 'bold 10px "Rubik", ui-monospace, monospace';
+  // ── LANDING STRIP — spaced-out zones with distance markers ──
+  const stripY = H2 - GROUND_H - 2;
+  const stripStart = 150;
+  const stripEnd = W2 - 40;
+  const stripW = stripEnd - stripStart;
+
+  // Subtle ruled baseline
+  ctx.strokeStyle = "rgba(255,255,255,0.1)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 6]);
+  ctx.beginPath();
+  ctx.moveTo(stripStart, stripY);
+  ctx.lineTo(stripEnd, stripY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Vertical tick marks every 20m-equivalent for distance scale
+  for (let i = 0; i <= 10; i++) {
+    const x = stripStart + (stripW * i) / 10;
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
+    ctx.beginPath();
+    ctx.moveTo(x, stripY - 4);
+    ctx.lineTo(x, stripY + 2);
+    ctx.stroke();
+  }
+
+  // Zone markers — each gets a spaced-out label chip + distance marker
+  ZONES.forEach((z, i) => {
+    const zx = stripStart + stripW * z.frac;
+    const isTarget = i === TARGET_ZONE;
+
+    // Glowing floor patch under the zone
+    const patch = ctx.createRadialGradient(zx, stripY, 2, zx, stripY, 42);
+    patch.addColorStop(0, z.color + "55");
+    patch.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = patch;
+    ctx.beginPath();
+    ctx.ellipse(zx, stripY, 42, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Vertical beam up from the zone
+    ctx.save();
+    const beam = ctx.createLinearGradient(zx, stripY - 80, zx, stripY);
+    beam.addColorStop(0, "rgba(0,0,0,0)");
+    beam.addColorStop(1, z.color + (isTarget ? "80" : "30"));
+    ctx.fillStyle = beam;
+    ctx.beginPath();
+    ctx.moveTo(zx - 3, stripY - 80);
+    ctx.lineTo(zx + 3, stripY - 80);
+    ctx.lineTo(zx + 6, stripY);
+    ctx.lineTo(zx - 6, stripY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Distance marker BELOW the strip (on the sand)
+    ctx.fillStyle = "rgba(40,25,8,0.75)";
+    roundRect(ctx, zx - 22, stripY + 6, 44, 14, 3);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.8)";
+    ctx.font = 'bold 9px ui-monospace, monospace';
     ctx.textAlign = "center";
-    ctx.fillText(z.label, zx, stripY - 22);
+    ctx.fillText(z.distance, zx, stripY + 16);
+
+    // Multiplier chip ABOVE the beam (floating in water)
+    const chipY = stripY - 94;
+    const chipW = 64, chipH = 22;
+    ctx.fillStyle = "rgba(2,24,48,0.9)";
+    roundRect(ctx, zx - chipW / 2, chipY, chipW, chipH, 6);
+    ctx.fill();
+    ctx.strokeStyle = z.color;
+    ctx.lineWidth = isTarget ? 2 : 1;
+    roundRect(ctx, zx - chipW / 2, chipY, chipW, chipH, 6);
+    ctx.stroke();
+    if (isTarget) {
+      ctx.shadowColor = z.color;
+      ctx.shadowBlur = 12;
+    }
+    ctx.fillStyle = z.color;
+    ctx.font = 'bold 12px "Rubik", sans-serif';
+    ctx.fillText(z.label, zx, chipY + 15);
+    ctx.shadowBlur = 0;
+
+    // Chest or bust token sitting on the zone
+    const itemY = stripY - 28;
+    if (z.mult === 0) {
+      // Bust marker — X skull via darker ink drop
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      drawDroplet(ctx, zx, itemY, 10, frame);
+      ctx.restore();
+      // X overlay
+      ctx.strokeStyle = "#ff5a5a";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(zx - 6, itemY - 6); ctx.lineTo(zx + 6, itemY + 6);
+      ctx.moveTo(zx + 6, itemY - 6); ctx.lineTo(zx - 6, itemY + 6);
+      ctx.stroke();
+    } else if (z.mult >= 1.8) {
+      const tier: 0 | 1 | 2 | 3 = z.mult >= 5 ? 3 : 2;
+      drawChest(ctx, zx, itemY, frame, tier);
+    } else if (z.mult >= 1.05) {
+      drawChest(ctx, zx, itemY, frame, z.mult >= 1.2 ? 1 : 0);
+    } else {
+      drawDroplet(ctx, zx, itemY, 10, frame);
+    }
   });
   ctx.textAlign = "start";
 
-  // Chests + drops along the landing zone so it reads as "the loot"
-  ZONES.forEach((z, i) => {
-    const zx = 90 + (W2 - 120) * z.frac;
-    const zy = stripY - 55;
-    if (z.mult === 0) {
-      // Bust zone — skull via a darker ink drop
-      ctx.save();
-      ctx.globalAlpha = 0.5;
-      drawDroplet(ctx, zx, zy, 10, frame);
-      ctx.restore();
-    } else if (z.mult >= 1.8) {
-      // Rare / jackpot: chest sprite with fancy tier
-      const tier: 0 | 1 | 2 | 3 = z.mult >= 5 ? 3 : 2;
-      drawChest(ctx, zx, zy, frame, tier);
-    } else if (z.mult >= 1.05) {
-      // Small wins: plain chest
-      drawChest(ctx, zx, zy, frame, i === 3 ? 0 : 1);
-    } else {
-      // Loss-ish zones: regular ink drop
-      drawDroplet(ctx, zx, zy, 10, frame);
-    }
-  });
+  // ── DETAILED CANNON (left side) ──
+  const cannonBaseX = 92;
+  const cannonBaseY = H2 - GROUND_H;
+  drawDetailedCannon(ctx, cannonBaseX, cannonBaseY, frame);
 
-  // ── CANNON (left side) ──
-  const cannonBaseX = 70;
-  const cannonBaseY = H2 - GROUND_H - 8;
-  // Barrel (angled up-right)
-  ctx.save();
-  ctx.translate(cannonBaseX, cannonBaseY);
-  ctx.rotate(-0.55); // ~32° up
-  // Shadow
-  ctx.fillStyle = "rgba(0,0,0,0.25)";
-  ctx.fillRect(-6, 4, 70, 4);
-  // Body
-  const cannon = ctx.createLinearGradient(0, -12, 0, 12);
-  cannon.addColorStop(0, "#6e3922");
-  cannon.addColorStop(0.5, "#3a2013");
-  cannon.addColorStop(1, "#1d100a");
-  ctx.fillStyle = cannon;
-  ctx.fillRect(-8, -12, 78, 24);
-  // Rim
-  ctx.strokeStyle = "#c28e5b";
-  ctx.lineWidth = 2;
-  ctx.strokeRect(-8, -12, 78, 24);
-  // Muzzle ring
-  ctx.fillStyle = "#8e5a33";
-  ctx.fillRect(64, -14, 8, 28);
-  // Muzzle smoke puff
-  ctx.fillStyle = "rgba(240,240,240,0.45)";
-  ctx.beginPath();
-  ctx.arc(78, 0, 10 + Math.sin(frame * 0.12) * 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "rgba(240,240,240,0.25)";
-  ctx.beginPath();
-  ctx.arc(86, -4, 7, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-  // Wheels
-  ctx.fillStyle = "#1d100a";
-  ctx.beginPath(); ctx.arc(cannonBaseX - 4, cannonBaseY + 6, 14, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cannonBaseX + 22, cannonBaseY + 6, 14, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#8e5a33";
-  ctx.beginPath(); ctx.arc(cannonBaseX - 4, cannonBaseY + 6, 4, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cannonBaseX + 22, cannonBaseY + 6, 4, 0, Math.PI * 2); ctx.fill();
+  // Coiled rope near the cannon base (touch of piracy)
+  drawCoiledRope(ctx, cannonBaseX + 68, cannonBaseY - 6);
+  // Stacked cannonball pyramid
+  drawCannonballs(ctx, cannonBaseX - 46, cannonBaseY - 6);
 
   // ── TRAJECTORY preview arc + squid mid-flight ──
-  const launchX = cannonBaseX + 70; // muzzle end (approximate)
-  const launchY = cannonBaseY - 40;
-  const landX = 90 + (W2 - 120) * 0.62; // visual target around the 1.05× zone
-  const landY = stripY - 55;
-  // Parabola from (launchX, launchY) to (landX, landY), apex ~120px above midpoint
-  const midX = (launchX + landX) / 2;
-  const apex = Math.min(launchY, landY) - 130;
+  const muzzleX = cannonBaseX + 62;
+  const muzzleY = cannonBaseY - 58;
+  const target = ZONES[TARGET_ZONE]!;
+  const landX = stripStart + stripW * target.frac;
+  const landY = stripY - 28;
+  const midX = (muzzleX + landX) / 2;
+  const apex = Math.min(muzzleY, landY) - 160;
 
   // Dotted trajectory
   ctx.save();
@@ -270,9 +307,8 @@ function render(
   ctx.lineWidth = 1.4;
   ctx.beginPath();
   for (let t = 0; t <= 1; t += 0.02) {
-    // Quadratic bezier through (launch, apex-at-mid, land)
-    const x = (1 - t) * (1 - t) * launchX + 2 * (1 - t) * t * midX + t * t * landX;
-    const y = (1 - t) * (1 - t) * launchY + 2 * (1 - t) * t * apex   + t * t * landY;
+    const x = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
+    const y = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
     if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.stroke();
@@ -280,54 +316,76 @@ function render(
 
   // Squid mid-flight at BIRD_FRAC along the arc
   const t = BIRD_FRAC;
-  const bx = (1 - t) * (1 - t) * launchX + 2 * (1 - t) * t * midX + t * t * landX;
-  const by = (1 - t) * (1 - t) * launchY + 2 * (1 - t) * t * apex   + t * t * landY;
+  const bx = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
+  const by = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
   const bird: Bird = { x: bx, y: by, vy: 0, r: 18 };
-  // Orient squid along trajectory slope
   const slope = Math.atan2(
-    2 * (1 - t) * (apex - launchY) + 2 * t * (landY - apex),
-    2 * (1 - t) * (midX - launchX) + 2 * t * (landX - midX),
+    2 * (1 - t) * (apex - muzzleY) + 2 * t * (landY - apex),
+    2 * (1 - t) * (midX - muzzleX) + 2 * t * (landX - midX),
   );
   drawBird(ctx, bird, slope * 1.5, frame * 0.6, frame);
 
-  // ── HUD: angle dial + fire button mockup ──
-  // Angle dial
-  ctx.fillStyle = "rgba(2,24,48,0.78)";
-  ctx.fillRect(24, 24, 130, 52);
-  ctx.strokeStyle = "rgba(127,227,255,0.35)";
-  ctx.strokeRect(24, 24, 130, 52);
-  ctx.fillStyle = "#7b94b8";
-  ctx.font = '10px ui-monospace, monospace';
-  ctx.fillText("ANGLE", 36, 42);
-  ctx.font = 'bold 18px "Rubik", sans-serif';
-  ctx.fillStyle = "#cfe7ff";
-  ctx.fillText("32°", 36, 66);
-  // Slider dots
-  for (let i = 0; i < 8; i++) {
-    ctx.fillStyle = i < 4 ? "#7fe3ff" : "rgba(127,227,255,0.2)";
-    ctx.fillRect(80 + i * 8, 56, 5, 3);
+  // Motion trail behind squid
+  ctx.save();
+  for (let i = 1; i <= 6; i++) {
+    const tt = Math.max(0, t - i * 0.025);
+    const tx = (1 - tt) * (1 - tt) * muzzleX + 2 * (1 - tt) * tt * midX + tt * tt * landX;
+    const ty = (1 - tt) * (1 - tt) * muzzleY + 2 * (1 - tt) * tt * apex + tt * tt * landY;
+    ctx.fillStyle = `rgba(127, 227, 255, ${0.25 - i * 0.035})`;
+    ctx.beginPath();
+    ctx.arc(tx, ty, 6 - i * 0.6, 0, Math.PI * 2);
+    ctx.fill();
   }
+  ctx.restore();
 
-  // Fire button
-  ctx.fillStyle = "#7fe3ff";
-  ctx.fillRect(24, 90, 130, 38);
-  ctx.fillStyle = "#021830";
-  ctx.font = 'bold 13px "Rubik", sans-serif';
+  // ── HUD: FIRE button + BET display ──
+  // Big FIRE button (single input — this is the whole game)
+  const fireX = 24, fireY = 24, fireW = 160, fireH = 58;
+  const fireBg = ctx.createLinearGradient(fireX, fireY, fireX, fireY + fireH);
+  fireBg.addColorStop(0, "#ffd76a");
+  fireBg.addColorStop(1, "#e0a020");
+  ctx.fillStyle = fireBg;
+  roundRect(ctx, fireX, fireY, fireW, fireH, 12);
+  ctx.fill();
+  ctx.fillStyle = "#1a0a00";
+  ctx.font = 'bold 20px "Rubik", sans-serif';
   ctx.textAlign = "center";
-  ctx.fillText("FIRE", 24 + 65, 114);
-  ctx.textAlign = "start";
+  ctx.fillText("FIRE", fireX + fireW / 2, fireY + 30);
+  ctx.fillStyle = "rgba(26,10,0,0.7)";
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.fillText("one input · one result", fireX + fireW / 2, fireY + 48);
 
-  // Bet display
+  // BET display
+  const betX = W2 - 180, betY = 24, betW = 156, betH = 58;
   ctx.fillStyle = "rgba(2,24,48,0.78)";
-  ctx.fillRect(W2 - 180, 24, 156, 52);
+  roundRect(ctx, betX, betY, betW, betH, 10); ctx.fill();
   ctx.strokeStyle = "rgba(127,227,255,0.35)";
-  ctx.strokeRect(W2 - 180, 24, 156, 52);
+  ctx.lineWidth = 1;
+  roundRect(ctx, betX, betY, betW, betH, 10); ctx.stroke();
   ctx.fillStyle = "#7b94b8";
   ctx.font = '10px ui-monospace, monospace';
-  ctx.fillText("BET", W2 - 170, 42);
+  ctx.textAlign = "left";
+  ctx.fillText("BET", betX + 12, betY + 18);
   ctx.fillStyle = "#cfe7ff";
-  ctx.font = 'bold 16px "Rubik", sans-serif';
-  ctx.fillText("0.0100 ETH", W2 - 170, 66);
+  ctx.font = 'bold 20px "Rubik", sans-serif';
+  ctx.fillText("0.0100", betX + 12, betY + 44);
+  ctx.fillStyle = "#7b94b8";
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.fillText("ETH", betX + 98, betY + 44);
+
+  // Distance readout center-top — updates live when firing
+  const drX = W2 / 2, drY = 34;
+  ctx.fillStyle = "rgba(2,24,48,0.78)";
+  roundRect(ctx, drX - 90, drY - 16, 180, 40, 9); ctx.fill();
+  ctx.strokeStyle = "rgba(127,227,255,0.3)";
+  roundRect(ctx, drX - 90, drY - 16, 180, 40, 9); ctx.stroke();
+  ctx.fillStyle = "#7b94b8";
+  ctx.font = '10px ui-monospace, monospace';
+  ctx.textAlign = "center";
+  ctx.fillText("DISTANCE · MULTIPLIER", drX, drY - 4);
+  ctx.fillStyle = "#7fe3ff";
+  ctx.font = 'bold 15px "Rubik", sans-serif';
+  ctx.fillText("108m  →  1.2×", drX, drY + 16);
 
   // Vignette
   const vig = ctx.createRadialGradient(W2 / 2, H2 / 2, H2 * 0.45, W2 / 2, H2 / 2, H2 * 0.9);
@@ -335,4 +393,301 @@ function render(
   vig.addColorStop(1, "rgba(0,0,0,0.45)");
   ctx.fillStyle = vig;
   ctx.fillRect(0, 0, W2, H2);
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+/// Detailed pirate-style cannon: tapered barrel, three brass bands with
+/// iron rivets, trunnions, dolphin handles, muzzle flash smoke, wheeled
+/// carriage with plank detail and spoked wheels. Ancored on the sand.
+function drawDetailedCannon(ctx: CanvasRenderingContext2D, baseX: number, baseY: number, frame: number) {
+  const angle = -0.55; // ~32° up
+
+  // ── CARRIAGE (wooden cart) ──
+  // Drawn before barrel so barrel sits on top
+  const carX = baseX - 18, carY = baseY - 26;
+  const carW = 64, carH = 22;
+
+  // Carriage shadow on sand
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.beginPath();
+  ctx.ellipse(baseX + 10, baseY + 2, 62, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Wooden side cheek (two planks with grain lines)
+  const woodGrad = ctx.createLinearGradient(0, carY, 0, carY + carH);
+  woodGrad.addColorStop(0, "#8b5a2b");
+  woodGrad.addColorStop(0.6, "#5a3816");
+  woodGrad.addColorStop(1, "#2e1a08");
+  ctx.fillStyle = woodGrad;
+  // Main body
+  ctx.beginPath();
+  ctx.moveTo(carX, carY + 4);
+  ctx.lineTo(carX + carW, carY);
+  ctx.lineTo(carX + carW, carY + carH);
+  ctx.lineTo(carX, carY + carH);
+  ctx.closePath();
+  ctx.fill();
+
+  // Plank seams
+  ctx.strokeStyle = "rgba(20,10,0,0.55)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const px = carX + (carW / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(px, carY + (1 - i / 4) * 4);
+    ctx.lineTo(px, carY + carH);
+    ctx.stroke();
+  }
+  // Wood grain strokes
+  ctx.strokeStyle = "rgba(40,20,5,0.35)";
+  for (let g = 0; g < 5; g++) {
+    ctx.beginPath();
+    ctx.moveTo(carX + 2, carY + 6 + g * 3);
+    ctx.quadraticCurveTo(carX + carW / 2, carY + 6 + g * 3 + (g % 2 ? -1 : 1) * 1.5, carX + carW - 2, carY + 6 + g * 3);
+    ctx.stroke();
+  }
+
+  // Iron bolts on the cheek
+  ctx.fillStyle = "#1a1410";
+  for (const [bx, by] of [[carX + 6, carY + 8], [carX + carW - 6, carY + 6], [carX + 6, carY + carH - 5], [carX + carW - 6, carY + carH - 5]]) {
+    ctx.beginPath();
+    ctx.arc(bx!, by!, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ── BARREL (tapered, with 3 brass bands + rivets + trunnions) ──
+  ctx.save();
+  ctx.translate(baseX, baseY - 20);
+  ctx.rotate(angle);
+
+  // Barrel shadow
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath();
+  ctx.moveTo(-6, 10);
+  ctx.lineTo(78, 12);
+  ctx.lineTo(78, 14);
+  ctx.lineTo(-6, 14);
+  ctx.closePath();
+  ctx.fill();
+
+  // Barrel body — tapered (wider at muzzle, narrower at breech)
+  // Draw as polygon for tapering
+  const barrelGrad = ctx.createLinearGradient(0, -16, 0, 16);
+  barrelGrad.addColorStop(0, "#5a5048");
+  barrelGrad.addColorStop(0.35, "#2a2218");
+  barrelGrad.addColorStop(0.55, "#1a140c");
+  barrelGrad.addColorStop(1, "#0a0804");
+  ctx.fillStyle = barrelGrad;
+  ctx.beginPath();
+  ctx.moveTo(-12, -10);              // breech top
+  ctx.lineTo(68, -14);               // muzzle top
+  ctx.lineTo(72, -16);               // muzzle lip top
+  ctx.lineTo(72, 16);                // muzzle lip bottom
+  ctx.lineTo(68, 14);                // muzzle bottom
+  ctx.lineTo(-12, 10);               // breech bottom
+  ctx.lineTo(-18, 6);                // cascabel bump
+  ctx.lineTo(-20, 0);
+  ctx.lineTo(-18, -6);
+  ctx.closePath();
+  ctx.fill();
+
+  // Highlight strip along top of barrel
+  const hiGrad = ctx.createLinearGradient(0, -10, 0, -4);
+  hiGrad.addColorStop(0, "rgba(255,255,255,0.28)");
+  hiGrad.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = hiGrad;
+  ctx.beginPath();
+  ctx.moveTo(-12, -10); ctx.lineTo(68, -14); ctx.lineTo(68, -11); ctx.lineTo(-12, -7);
+  ctx.closePath();
+  ctx.fill();
+
+  // Three brass bands with iron rivets
+  const bandPositions = [0, 26, 58]; // along the barrel
+  for (const bx of bandPositions) {
+    // Taper interpolation for band height
+    const tb = (bx + 20) / 92;
+    const bandH = 10 + (1 - tb) * 4;
+    // Brass band
+    const brass = ctx.createLinearGradient(0, -bandH, 0, bandH);
+    brass.addColorStop(0, "#f4d48a");
+    brass.addColorStop(0.5, "#c28e4a");
+    brass.addColorStop(1, "#6a4820");
+    ctx.fillStyle = brass;
+    ctx.fillRect(bx - 2, -bandH - 1, 5, bandH * 2 + 2);
+    // Rivets
+    ctx.fillStyle = "#1a1008";
+    ctx.beginPath();
+    ctx.arc(bx + 0.5, -bandH + 2, 1.1, 0, Math.PI * 2);
+    ctx.arc(bx + 0.5, bandH - 2, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Muzzle lip (brass rim)
+  const lipGrad = ctx.createLinearGradient(0, -16, 0, 16);
+  lipGrad.addColorStop(0, "#f4d48a");
+  lipGrad.addColorStop(0.5, "#c28e4a");
+  lipGrad.addColorStop(1, "#6a4820");
+  ctx.fillStyle = lipGrad;
+  ctx.fillRect(68, -16, 4, 32);
+  // Inside of muzzle (dark)
+  ctx.fillStyle = "#050302";
+  ctx.beginPath();
+  ctx.ellipse(71, 0, 2, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Trunnion pivot circle
+  ctx.fillStyle = "#2a2218";
+  ctx.beginPath();
+  ctx.arc(14, 14, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#8a7850";
+  ctx.beginPath();
+  ctx.arc(14, 14, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Dolphin handle on top (decorative lifting loop)
+  ctx.strokeStyle = "#c28e4a";
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(22, -10);
+  ctx.quadraticCurveTo(28, -18, 34, -10);
+  ctx.stroke();
+
+  // Cascabel ball (rear knob)
+  const casc = ctx.createRadialGradient(-19, 0, 1, -19, 0, 6);
+  casc.addColorStop(0, "#5a5048");
+  casc.addColorStop(1, "#0a0804");
+  ctx.fillStyle = casc;
+  ctx.beginPath();
+  ctx.arc(-19, 0, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Muzzle smoke — layered puffs with movement
+  for (let i = 0; i < 4; i++) {
+    const sf = frame * 0.12 + i;
+    const sx = 82 + i * 6 + Math.sin(sf) * 1.5;
+    const sy = -2 + Math.cos(sf * 0.7) * 2 - i * 2;
+    const sr = 10 - i * 1.2 + Math.sin(sf) * 1;
+    const sa = 0.5 - i * 0.1;
+    ctx.fillStyle = `rgba(240, 240, 250, ${sa})`;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Glowing muzzle flash
+  const flash = ctx.createRadialGradient(74, 0, 1, 74, 0, 18);
+  flash.addColorStop(0, "rgba(255, 220, 140, 0.8)");
+  flash.addColorStop(0.4, "rgba(255, 160, 60, 0.4)");
+  flash.addColorStop(1, "rgba(255, 80, 20, 0)");
+  ctx.fillStyle = flash;
+  ctx.beginPath();
+  ctx.arc(74, 0, 18, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // ── WHEELS (spoked) ──
+  for (const wx of [baseX - 10, baseX + 22]) {
+    // Outer iron rim
+    ctx.fillStyle = "#1a140a";
+    ctx.beginPath();
+    ctx.arc(wx, baseY - 6, 14, 0, Math.PI * 2);
+    ctx.fill();
+    // Wooden disk
+    const wheelGrad = ctx.createRadialGradient(wx, baseY - 6, 2, wx, baseY - 6, 12);
+    wheelGrad.addColorStop(0, "#8b5a2b");
+    wheelGrad.addColorStop(1, "#3a2310");
+    ctx.fillStyle = wheelGrad;
+    ctx.beginPath();
+    ctx.arc(wx, baseY - 6, 12, 0, Math.PI * 2);
+    ctx.fill();
+    // Spokes
+    ctx.strokeStyle = "#2a1a08";
+    ctx.lineWidth = 2;
+    for (let s = 0; s < 6; s++) {
+      const a = (s / 6) * Math.PI * 2 + frame * 0.003;
+      ctx.beginPath();
+      ctx.moveTo(wx, baseY - 6);
+      ctx.lineTo(wx + Math.cos(a) * 12, baseY - 6 + Math.sin(a) * 12);
+      ctx.stroke();
+    }
+    // Hub
+    ctx.fillStyle = "#c28e4a";
+    ctx.beginPath();
+    ctx.arc(wx, baseY - 6, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#1a1008";
+    ctx.beginPath();
+    ctx.arc(wx, baseY - 6, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawCannonballs(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
+  // Small pyramid: 3 on bottom, 2 on top, 1 on top-top
+  const r = 4.5;
+  const positions = [
+    [-2 * r, 0, 0], [0, 0, 0], [2 * r, 0, 0],
+    [-r, -r * 1.6, 1], [r, -r * 1.6, 1],
+    [0, -r * 3.2, 2],
+  ] as const;
+  for (const [dx, dy, row] of positions) {
+    const bx = cx + dx, by = cy + dy;
+    const grad = ctx.createRadialGradient(bx - 1, by - 1, 0.5, bx, by, r);
+    grad.addColorStop(0, "#4a4a4a");
+    grad.addColorStop(0.7, "#1a1a1a");
+    grad.addColorStop(1, "#050505");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fill();
+    // Tiny highlight
+    ctx.fillStyle = `rgba(255,255,255,${0.15 + row * 0.05})`;
+    ctx.beginPath();
+    ctx.arc(bx - 1.2, by - 1.2, 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawCoiledRope(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
+  // Concentric coils, top-down view
+  ctx.strokeStyle = "#d4b080";
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = "round";
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 5 + i * 2.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // Twist texture dots
+  ctx.strokeStyle = "#8a6030";
+  ctx.lineWidth = 0.8;
+  for (let i = 0; i < 3; i++) {
+    const r = 5 + i * 2.5;
+    for (let a = 0; a < Math.PI * 2; a += 0.7) {
+      const x1 = cx + Math.cos(a) * (r - 0.8);
+      const y1 = cy + Math.sin(a) * (r - 0.8);
+      const x2 = cx + Math.cos(a) * (r + 0.8);
+      const y2 = cy + Math.sin(a) * (r + 0.8);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+  }
 }
