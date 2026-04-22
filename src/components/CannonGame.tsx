@@ -39,10 +39,9 @@ type RoundStatus =
     }
   | { status: "error"; error: string };
 
-// World dimensions — the scene is bigger than any one viewport. The
-// canvas shows a zoomed-in side-scroller window into this world and the
-// camera pans as the squid flies, so nothing ever looks tiny.
-const WORLD_W = 2400;
+// World dimensions — wider than any one viewport so the camera can
+// pan a long way as the squid flies, giving the scroll real distance.
+const WORLD_W = 3600;
 const WORLD_H = 1200;
 // Scene content is placed between stripStart and stripEnd in world
 // coordinates — the cannon sits at world x=92, the ground strip fills
@@ -60,16 +59,15 @@ const MIN_ANGLE = 20;
 const MAX_ANGLE = 75;
 const DEFAULT_ANGLE = 45;
 // Squid flight animation length, in rAF frames (~60fps). Long + slow so
-// the squid has time to bounce off stuff and every round feels like a
-// little journey rather than a snap-to-landing.
-const FLIGHT_FRAMES = 200;
+// the squid has time to bounce off stuff and the scroll reads as a
+// full journey rather than a snap-to-landing.
+const FLIGHT_FRAMES = 280;
 // After landing, the squid tumbles on the ground for these many frames
 // before coming to rest. Adds drama without changing the payout spot.
-const TUMBLE_FRAMES = 50;
-// Zoom: how many world units tall the canvas shows. Smaller = tighter
-// zoom. WORLD_H is 1200, so 850 gives roughly a 40% zoom-in over the
-// fit-everything view.
-const VISIBLE_WORLD_H = 850;
+const TUMBLE_FRAMES = 60;
+// Zoom: how many world units tall the canvas shows. 600 = tight zoom;
+// the camera always follows the squid so the landing and arc still read.
+const VISIBLE_WORLD_H = 620;
 
 type Bubble = { x: number; y: number; r: number; tw: number; vy: number; wiggle: number };
 type Weed = { x: number; w: number; h: number; layer: 0 | 1 };
@@ -453,7 +451,7 @@ function CannonCanvas({
     // + wiggle phase so they drift up convincingly.
     const bubbleRand = mulberry32(layoutSeed ^ 0xB0BB1E);
     const bubbles: Bubble[] = [];
-    for (let i = 0; i < 170; i++) {
+    for (let i = 0; i < 260; i++) {
       bubbles.push({
         x: bubbleRand() * WORLD_W,
         y: 30 + bubbleRand() * (WORLD_H - GROUND_H - 60),
@@ -464,8 +462,8 @@ function CannonCanvas({
       });
     }
     const weeds: Weed[] = [];
-    for (let i = 0; i < 24; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
-    for (let i = 0; i < 24; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
+    for (let i = 0; i < 36; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
+    for (let i = 0; i < 36; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
 
     const rocks = generateRocks(layoutSeed);
     const reefs = generateReefs(layoutSeed * 7919);
@@ -565,7 +563,7 @@ function mulberry32(seed: number) {
 function generateRocks(seed: number): Rock[] {
   const rand = mulberry32(seed);
   const rocks: Rock[] = [];
-  const count = 9 + Math.floor(rand() * 6);
+  const count = 16 + Math.floor(rand() * 8);
   for (let i = 0; i < count; i++) {
     const band = rand();
     rocks.push({
@@ -580,7 +578,7 @@ function generateRocks(seed: number): Rock[] {
 function generateReefs(seed: number): Reef[] {
   const rand = mulberry32(seed);
   const reefs: Reef[] = [];
-  const count = 3 + Math.floor(rand() * 3);
+  const count = 5 + Math.floor(rand() * 4);
   for (let i = 0; i < count; i++) {
     const corals: ReefCoral[] = [];
     const coralCount = 4 + Math.floor(rand() * 5);
@@ -604,7 +602,7 @@ function generateReefs(seed: number): Reef[] {
 function generateCreatures(seed: number): Creature[] {
   const rand = mulberry32(seed);
   const creatures: Creature[] = [];
-  const count = 4 + Math.floor(rand() * 3);
+  const count = 8 + Math.floor(rand() * 5);
   for (let i = 0; i < count; i++) {
     const isSquid = rand() < 0.4;
     creatures.push({
@@ -621,12 +619,13 @@ function generateCreatures(seed: number): Creature[] {
 function generateMidAirFish(seed: number): MidAirFish[] {
   const rand = mulberry32(seed);
   const fish: MidAirFish[] = [];
-  // Dense enough that most arcs clip several fish on the way across.
-  const count = 14 + Math.floor(rand() * 7);
+  // Dense enough across the wider world that most arcs clip several
+  // fish on the way across.
+  const count = 26 + Math.floor(rand() * 10);
   for (let i = 0; i < count; i++) {
     fish.push({
-      x: 0.12 + rand() * 0.84,
-      y: 0.2 + rand() * 0.55,
+      x: 0.1 + rand() * 0.86,
+      y: 0.18 + rand() * 0.6,
       color: rand() < 0.33 ? "#ff9b5a" : rand() < 0.5 ? "#7fe3ff" : rand() < 0.5 ? "#ff7aa8" : "#ffd76a",
       size: 0.7 + rand() * 0.5,
       phase: rand() * Math.PI * 2,
@@ -706,16 +705,19 @@ function render(
     squidWorldY = (1 - t) * (1 - t) * mY_ + 2 * (1 - t) * t * apex_ + t * t * landY;
   }
 
-  // Camera targets — cannon at idle, squid during flight.
+  // Camera targets — cannon at idle, squid during flight. Anchor the
+  // squid slightly left of center (0.42) so the view leads ahead of it
+  // in the direction of motion, and lerp snappier so the tight zoom
+  // doesn't leave the squid hanging off the edge.
   const idleCamY = Math.max(0, H2 - viewWorldH); // show ground + cannon
   let targetCamX = 0;
   let targetCamY = idleCamY;
   if (squidWorldX != null && squidWorldY != null) {
-    targetCamX = Math.max(0, Math.min(W2 - viewWorldW, squidWorldX - viewWorldW * 0.4));
+    targetCamX = Math.max(0, Math.min(W2 - viewWorldW, squidWorldX - viewWorldW * 0.42));
     targetCamY = Math.max(0, Math.min(H2 - viewWorldH, squidWorldY - viewWorldH * 0.45));
   }
-  cameraRef.x += (targetCamX - cameraRef.x) * 0.14;
-  cameraRef.y += (targetCamY - cameraRef.y) * 0.16;
+  cameraRef.x += (targetCamX - cameraRef.x) * 0.22;
+  cameraRef.y += (targetCamY - cameraRef.y) * 0.22;
   // Screen shake — trauma squared so it feels punchy at high values
   // and fades quickly once it starts decaying.
   cameraRef.trauma = Math.max(0, cameraRef.trauma - 0.04);
@@ -1275,6 +1277,36 @@ function render(
         ctx.fillText(mult.toFixed(2) + "×", landX, landY - 40);
         ctx.textAlign = "start";
       }
+    }
+  }
+
+  // Speed lines — white streaks flying across the screen in screen
+  // space, drawn only during the flight portion of a round. Sells the
+  // "squid is flying really fast" feel without tying to world scroll.
+  if (round.status === "resolved" && resolvedAtFrame != null) {
+    const sinceResolve = frame - resolvedAtFrame;
+    const flightT = Math.min(1, sinceResolve / FLIGHT_FRAMES);
+    // Strength peaks mid-flight, tapers toward landing.
+    const streakA = Math.sin(flightT * Math.PI) * 0.35;
+    if (streakA > 0.02) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.save();
+      ctx.strokeStyle = `rgba(220, 240, 255, ${streakA})`;
+      ctx.lineWidth = 1.5;
+      ctx.lineCap = "round";
+      const t = frame * 22;
+      for (let i = 0; i < 14; i++) {
+        const yBase = (i * 157 + t * 0.6) % (ch + 100) - 50;
+        // Skew streaks so they read as forward motion from upper-left
+        // down-right past the camera.
+        const xStart = ((i * 317 + t) % (cw + 260)) - 260;
+        const len = 60 + (i % 5) * 30;
+        ctx.beginPath();
+        ctx.moveTo(xStart, yBase);
+        ctx.lineTo(xStart + len, yBase + len * 0.08);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
   }
 
