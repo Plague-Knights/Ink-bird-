@@ -251,14 +251,15 @@ export function CannonGame() {
           const won = BigInt(round.payoutWei) > BigInt(round.betWei);
           const bust = round.distanceBp === 0;
           return (
-            <div style={{
-              position: "absolute", left: "50%", top: 16, transform: "translateX(-50%)",
+            <div className="cannon-result-reveal" style={{
+              position: "absolute", left: "50%", top: 16,
               padding: "10px 20px",
               background: "rgba(2,24,48,0.8)",
               border: "1px solid rgba(127,227,255,0.35)",
               borderRadius: 12, color: "#cfe7ff",
               fontFamily: "ui-monospace, monospace", textAlign: "center",
               backdropFilter: "blur(8px)", minWidth: 240, pointerEvents: "none",
+              boxShadow: "0 10px 40px rgba(127,227,255,0.25)",
             }}>
               <div style={{ fontSize: 11, opacity: 0.75 }}>
                 {bust ? "BUST — hit a rock" : `${meters}m · ${mult.toFixed(2)}× multiplier`}
@@ -480,12 +481,20 @@ function CannonCanvas({
       rot: number; vrot: number;
     }>();
     // Smoothed camera — lerps toward a target each frame on both axes.
-    const cameraRef = { x: 0, y: Math.max(0, WORLD_H - VISIBLE_WORLD_H) };
+    // trauma drives a screen-shake amount that decays each frame; any
+    // impactful event (fire, hit, landing) bumps it up.
+    const cameraRef = { x: 0, y: Math.max(0, WORLD_H - VISIBLE_WORLD_H), trauma: 0 };
     // Physics-based squid kickback. Each fish collision adds a velocity
     // impulse; every frame the kick decays and its position offset is
     // added to the squid's bezier coordinates so the flight visibly
     // ricochets off the fish it clips.
     const squidKick = { vx: 0, vy: 0, ox: 0, oy: 0 };
+    // Ink particle trail — squid sheds small dark droplets while in
+    // flight, lending a sense of speed and giving the arc a visible wake.
+    const inkTrail: { x: number; y: number; r: number; born: number }[] = [];
+    // Combo tracker — every fish hit within ~40 frames of the last
+    // increments the combo and pops a larger "BONK ×N!" label.
+    const combo = { count: 0, lastHitFrame: -999, peakFrame: -999 };
 
     resolvedAtFrameRef.current = null;
 
@@ -502,16 +511,21 @@ function CannonCanvas({
         lockedAngleRef.current = angleRef.current;
         fishHits.clear();
         squidKick.vx = 0; squidKick.vy = 0; squidKick.ox = 0; squidKick.oy = 0;
+        inkTrail.length = 0;
+        combo.count = 0; combo.lastHitFrame = -999; combo.peakFrame = -999;
+        cameraRef.trauma = Math.min(1, cameraRef.trauma + 0.7); // fire BOOM shake
       } else if (r.status !== "resolved") {
         resolvedAtFrameRef.current = null;
         fishHits.clear();
         squidKick.vx = 0; squidKick.vy = 0; squidKick.ox = 0; squidKick.oy = 0;
+        inkTrail.length = 0;
+        combo.count = 0; combo.lastHitFrame = -999; combo.peakFrame = -999;
       }
       render(
         ctx, bubbles, weeds, rocks, reefs, creatures, midAirFish, fishHits,
         frame, r, resolvedAtFrameRef.current, betRef.current,
         r.status === "resolved" ? lockedAngleRef.current : angleRef.current,
-        cameraRef, squidKick,
+        cameraRef, squidKick, inkTrail, combo,
       );
       raf = requestAnimationFrame(tick);
     };
@@ -647,8 +661,10 @@ function render(
   resolvedAtFrame: number | null,
   _bet: bigint | null,
   angleDeg: number,
-  cameraRef: { x: number; y: number },
+  cameraRef: { x: number; y: number; trauma: number },
   squidKick: { vx: number; vy: number; ox: number; oy: number },
+  inkTrail: { x: number; y: number; r: number; born: number }[],
+  combo: { count: number; lastHitFrame: number; peakFrame: number },
 ) {
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
@@ -700,11 +716,17 @@ function render(
   }
   cameraRef.x += (targetCamX - cameraRef.x) * 0.14;
   cameraRef.y += (targetCamY - cameraRef.y) * 0.16;
+  // Screen shake — trauma squared so it feels punchy at high values
+  // and fades quickly once it starts decaying.
+  cameraRef.trauma = Math.max(0, cameraRef.trauma - 0.04);
+  const shakeAmp = cameraRef.trauma * cameraRef.trauma;
+  const shakeX = (Math.random() - 0.5) * shakeAmp * 40;
+  const shakeY = (Math.random() - 0.5) * shakeAmp * 40;
   const camX = cameraRef.x;
   const camY = cameraRef.y;
 
   // Apply world→screen transform. Everything below draws in world coords.
-  ctx.setTransform(scale, 0, 0, scale, -camX * scale, -camY * scale);
+  ctx.setTransform(scale, 0, 0, scale, -camX * scale + shakeX, -camY * scale + shakeY);
 
   // Ocean gradient
   const sky = ctx.createLinearGradient(0, 0, 0, H2 - GROUND_H);
@@ -878,11 +900,19 @@ function render(
     ctx.restore();
   }
 
-  // Cannon — tilt follows the player's chosen angle. angleDeg is the
-  // elevation (0 = horizontal to the right, 90 = straight up); canvas y
-  // grows downward, so the barrel's rotation is -radians(angleDeg).
-  const cannonBaseX = 92;
+  // Cannon — tilt follows the player's chosen angle, and the carriage
+  // recoils backward in the first few frames of flight, then settles.
   const cannonBaseY = H2 - GROUND_H;
+  let cannonBaseX = 92;
+  if (round.status === "resolved" && resolvedAtFrame != null) {
+    const sinceResolve = frame - resolvedAtFrame;
+    if (sinceResolve < 22) {
+      const recoilT = sinceResolve / 22;
+      // Cubic ease: max kick at start, settle to 0.
+      const kick = Math.pow(1 - recoilT, 2) * 14;
+      cannonBaseX = 92 - kick;
+    }
+  }
   const puff = round.status === "awaiting_play" || round.status === "revealing";
   const barrelRad = -(angleDeg * Math.PI) / 180;
   drawDetailedCannon(ctx, cannonBaseX, cannonBaseY, frame, puff, barrelRad);
@@ -1066,8 +1096,66 @@ function render(
           // component, plus a random wobble so no two hits feel the same.
           squidKick.vy -= 5 + Math.random() * 2;
           squidKick.vx -= Math.cos(slope) * 2 + (Math.random() - 0.5) * 2;
+          // Combo bump — extends if it's been recent enough.
+          if (frame - combo.lastHitFrame < 40) combo.count++;
+          else combo.count = 1;
+          combo.lastHitFrame = frame;
+          if (combo.count >= 2) combo.peakFrame = frame;
+          // Shake grows with combo so chains feel beefier.
+          cameraRef.trauma = Math.min(1, cameraRef.trauma + 0.22 + Math.min(0.25, combo.count * 0.06));
         }
       }
+    }
+
+    // Combo banner — draws above the squid when a chain of 2+ hits is
+    // live, scales up with count, fades after a short tail.
+    if (combo.count >= 2 && frame - combo.peakFrame < 38) {
+      const age = frame - combo.peakFrame;
+      const fadeT = age / 38;
+      const popScale = 1 + Math.max(0, 1 - age / 8) * 0.4;
+      const sz = (16 + Math.min(combo.count, 8) * 3) * popScale;
+      ctx.save();
+      ctx.translate(bx, by - 42 - age * 0.6);
+      ctx.rotate((Math.sin(age * 0.3) * 0.08));
+      ctx.fillStyle = `rgba(255, 228, 120, ${1 - fadeT})`;
+      ctx.strokeStyle = `rgba(60, 20, 0, ${1 - fadeT})`;
+      ctx.lineWidth = 3;
+      ctx.font = `900 ${sz}px "Rubik", sans-serif`;
+      ctx.textAlign = "center";
+      const label = `BONK × ${combo.count}!`;
+      ctx.strokeText(label, 0, 0);
+      ctx.fillText(label, 0, 0);
+      ctx.textAlign = "start";
+      ctx.restore();
+    }
+
+    // Spawn ink trail particles as the squid flies. Drop a few per
+    // frame with slight spread; older particles fade out.
+    if (tumbleT === 0 && animProgress < 0.99) {
+      for (let i = 0; i < 2; i++) {
+        inkTrail.push({
+          x: bx + (Math.random() - 0.5) * 6,
+          y: by + (Math.random() - 0.5) * 6,
+          r: 2 + Math.random() * 2.5,
+          born: frame,
+        });
+      }
+    }
+    // Cap trail length so it doesn't balloon.
+    while (inkTrail.length > 180) inkTrail.shift();
+    // Draw the trail (oldest first so newest pops on top).
+    for (const p of inkTrail) {
+      const age = frame - p.born;
+      const a = Math.max(0, 1 - age / 45);
+      if (a <= 0) continue;
+      ctx.fillStyle = `rgba(20, 10, 35, ${a * 0.55})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r * (1 + age * 0.03), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // First frame of tumble = landing impact shake.
+    if (sinceResolve === FLIGHT_FRAMES + 1) {
+      cameraRef.trauma = Math.min(1, cameraRef.trauma + (bust ? 0.55 : 0.4));
     }
     // Impact flash — shock ring, star-burst spokes, and a "BONK!" pop
     // at the collision point for ~20 frames after each hit.
