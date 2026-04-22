@@ -445,7 +445,15 @@ function CannonCanvas({
     const reefs = generateReefs(layoutSeed * 7919);
     const creatures = generateCreatures(layoutSeed * 31337);
     const midAirFish = generateMidAirFish(layoutSeed * 11117);
-    const fishHits = new Set<number>(); // indices of midAirFish hit this flight
+    // Hit fish carry their knockback state (pos delta, velocity,
+    // rotation) so we can animate them flying off while the squid
+    // continues on its contract-determined arc.
+    const fishHits = new Map<number, {
+      hitFrame: number;
+      ox: number; oy: number;    // accumulated offset from original position
+      vx: number; vy: number;    // velocity in world units/frame
+      rot: number; vrot: number;
+    }>();
     // Smoothed camera — lerps toward a target each frame.
     const cameraRef = { x: 0 };
 
@@ -595,7 +603,12 @@ function render(
   reefs: Reef[],
   creatures: Creature[],
   midAirFish: MidAirFish[],
-  fishHits: Set<number>,
+  fishHits: Map<number, {
+    hitFrame: number;
+    ox: number; oy: number;
+    vx: number; vy: number;
+    rot: number; vrot: number;
+  }>,
   frame: number,
   round: RoundStatus,
   resolvedAtFrame: number | null,
@@ -722,6 +735,9 @@ function render(
     drawBottomCreature(ctx, cx, sandLevel - 6, c, frame);
   }
   // Positions of mid-air fish this frame — used for collision + render.
+  // Unhit fish bob idly; hit fish get drawn below with their accumulated
+  // knockback offset so they can visibly fly off when the squid slams
+  // into them.
   const fishPositions: { fx: number; fy: number; f: MidAirFish; idx: number }[] = [];
   for (let i = 0; i < midAirFish.length; i++) {
     const f = midAirFish[i]!;
@@ -731,6 +747,29 @@ function render(
     if (!fishHits.has(i)) {
       drawFishSprite(ctx, fx, fy, f.color, f.size, f.flip, frame + f.phase * 30);
     }
+  }
+
+  // Advance + draw hit fish — they tumble away, rotating, fading out,
+  // and decelerate slightly as gravity-ish friction kicks in.
+  for (const [idx, hit] of fishHits) {
+    hit.ox += hit.vx;
+    hit.oy += hit.vy;
+    hit.vy += 0.18; // slight gravity so they arc downward when flung
+    hit.vx *= 0.985;
+    hit.rot += hit.vrot;
+    const f = midAirFish[idx]!;
+    const base = fishPositions.find(p => p.idx === idx)!;
+    const drawX = base.fx + hit.ox;
+    const drawY = base.fy + hit.oy;
+    const age = frame - hit.hitFrame;
+    const alpha = Math.max(0, 1 - age / 60);
+    if (alpha <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(drawX, drawY);
+    ctx.rotate(hit.rot);
+    drawFishSprite(ctx, 0, 0, f.color, f.size, f.flip, frame + f.phase * 30);
+    ctx.restore();
   }
 
   // Cannon — tilt follows the player's chosen angle. angleDeg is the
@@ -805,12 +844,26 @@ function render(
       ctx.fill();
     }
 
-    const bird: Bird = { x: bx, y: by, vy: 0, r: 18 };
-    drawBird(ctx, bird, slope * 1.5, frame * 0.6, frame);
+    // Squid jolt — for ~12 frames after any hit the squid is visibly
+    // knocked around by the collision. Strongest right at impact,
+    // decaying quickly so the arc still reads clearly.
+    let joltX = 0, joltY = 0, joltRot = 0;
+    for (const [, hit] of fishHits) {
+      const age = frame - hit.hitFrame;
+      if (age < 0 || age > 12) continue;
+      const k = (12 - age) / 12;
+      joltX += (Math.sin(age * 2.1) * 8) * k;
+      joltY += (Math.cos(age * 1.7) * 6) * k;
+      joltRot += Math.sin(age * 2.4) * 0.25 * k;
+    }
+
+    const bird: Bird = { x: bx + joltX, y: by + joltY, vy: 0, r: 18 };
+    drawBird(ctx, bird, slope * 1.5 + joltRot, frame * 0.6, frame);
 
     // Mid-air fish hit detection — cosmetic only (payout is already
-    // fixed by the contract). If the squid's hitbox overlaps a fish,
-    // mark it hit and draw a burst at its position.
+    // fixed by the contract). On impact, we knock the fish away in the
+    // squid's direction of motion plus some spin, and draw a flash at
+    // the hit point so the collision reads as a real bonk.
     if (animProgress > 0.04 && animProgress < 0.98) {
       for (const fp of fishPositions) {
         if (fishHits.has(fp.idx)) continue;
@@ -818,30 +871,60 @@ function render(
         const dx = bx - fp.fx;
         const dy = by - fp.fy;
         if (dx * dx + dy * dy < (18 + fishR) * (18 + fishR)) {
-          fishHits.add(fp.idx);
+          const vx = Math.cos(slope) * 9 + (Math.random() - 0.5) * 3;
+          const vy = Math.sin(slope) * 9 - 2 + (Math.random() - 0.5) * 3;
+          fishHits.set(fp.idx, {
+            hitFrame: frame,
+            ox: 0, oy: 0,
+            vx, vy,
+            rot: 0, vrot: (Math.random() - 0.5) * 0.45,
+          });
         }
       }
     }
+    // Impact flash — shock ring, star-burst spokes, and a "BONK!" pop
+    // at the collision point for ~20 frames after each hit.
     for (const fp of fishPositions) {
-      if (!fishHits.has(fp.idx)) continue;
-      // Burst particles — 8 little sparks radiating from the fish spot.
-      const age = (frame - resolvedAtFrame) % 200;
-      const burstA = Math.max(0, 1 - age / 40);
-      if (burstA > 0) {
-        ctx.save();
-        ctx.strokeStyle = `rgba(255, 215, 106, ${burstA})`;
-        ctx.lineWidth = 2;
-        for (let s = 0; s < 8; s++) {
-          const a = (s / 8) * Math.PI * 2;
-          const r1 = 6 + age * 0.8;
-          const r2 = r1 + 10;
-          ctx.beginPath();
-          ctx.moveTo(fp.fx + Math.cos(a) * r1, fp.fy + Math.sin(a) * r1);
-          ctx.lineTo(fp.fx + Math.cos(a) * r2, fp.fy + Math.sin(a) * r2);
-          ctx.stroke();
-        }
-        ctx.restore();
+      const hit = fishHits.get(fp.idx);
+      if (!hit) continue;
+      const age = frame - hit.hitFrame;
+      if (age > 22) continue;
+      const t = age / 22;
+      const ringR = 14 + t * 48;
+      const ringA = (1 - t) * 0.9;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255, 240, 170, ${ringA})`;
+      ctx.lineWidth = 3 - t * 2;
+      ctx.beginPath();
+      ctx.arc(fp.fx, fp.fy, ringR, 0, Math.PI * 2);
+      ctx.stroke();
+      // Star burst spokes
+      ctx.strokeStyle = `rgba(255, 215, 106, ${ringA})`;
+      ctx.lineWidth = 2.5;
+      for (let s = 0; s < 8; s++) {
+        const a = (s / 8) * Math.PI * 2;
+        const r1 = 6 + t * 22;
+        const r2 = r1 + 14;
+        ctx.beginPath();
+        ctx.moveTo(fp.fx + Math.cos(a) * r1, fp.fy + Math.sin(a) * r1);
+        ctx.lineTo(fp.fx + Math.cos(a) * r2, fp.fy + Math.sin(a) * r2);
+        ctx.stroke();
       }
+      // "POW" text pops
+      if (age < 14) {
+        const popS = 1 + (1 - age / 14) * 0.6;
+        ctx.translate(fp.fx, fp.fy - 28 - age * 0.6);
+        ctx.scale(popS, popS);
+        ctx.fillStyle = `rgba(255, 235, 130, ${ringA})`;
+        ctx.strokeStyle = `rgba(30, 12, 0, ${ringA})`;
+        ctx.lineWidth = 3;
+        ctx.font = 'bold 14px "Rubik", sans-serif';
+        ctx.textAlign = "center";
+        ctx.strokeText("BONK!", 0, 0);
+        ctx.fillText("BONK!", 0, 0);
+        ctx.textAlign = "start";
+      }
+      ctx.restore();
     }
 
     // Landing effect after animation completes
