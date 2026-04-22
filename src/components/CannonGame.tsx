@@ -205,17 +205,14 @@ export function CannonGame() {
   const sliderLocked = round.status !== "idle" && round.status !== "resolved" && round.status !== "error";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
-      {/* Game stage — fills the viewport. The canvas renders a
-          zoomed-in scrolling window into the world, so it doesn't need
-          to preserve the world's aspect; it can be any shape and the
-          camera pans horizontally as the squid flies. */}
-      <div style={{
-        position: "relative",
-        width: "100%",
-        height: "calc(100vh - 70px)",
-        margin: "0 auto",
-      }}>
+    <div style={{
+      position: "fixed", inset: 0,
+      display: "flex", flexDirection: "column",
+      background: "#02122a",
+    }}>
+      {/* Game stage — edge-to-edge, no chrome. Only floating elements
+          are result / error toast at top-center when applicable. */}
+      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         <CannonCanvas
           round={round}
           layoutSeed={layoutSeed}
@@ -223,18 +220,70 @@ export function CannonGame() {
           angle={angle}
         />
 
-        {/* Top-left HUD: min/max chip */}
-        <div style={hudChipStyle("top-left")}>
-          <span style={hudDimText}>min</span>
-          <b style={{ color: "#cfe7ff" }}>{Number(minBetEth).toFixed(4)} ETH</b>
-          <span style={{ ...hudDimText, marginLeft: 8 }}>max</span>
-          <b style={{ color: "#cfe7ff" }}>{Number(maxBetEth).toFixed(4)} ETH</b>
-        </div>
+        {round.status === "resolved" && (() => {
+          const mult = distanceBpToMultiplier(round.distanceBp);
+          const meters = distanceBpToMeters(round.distanceBp);
+          const won = BigInt(round.payoutWei) > BigInt(round.betWei);
+          const bust = round.distanceBp === 0;
+          return (
+            <div style={{
+              position: "absolute", left: "50%", top: 16, transform: "translateX(-50%)",
+              padding: "10px 20px",
+              background: "rgba(2,24,48,0.8)",
+              border: "1px solid rgba(127,227,255,0.35)",
+              borderRadius: 12, color: "#cfe7ff",
+              fontFamily: "ui-monospace, monospace", textAlign: "center",
+              backdropFilter: "blur(8px)", minWidth: 240, pointerEvents: "none",
+            }}>
+              <div style={{ fontSize: 11, opacity: 0.75 }}>
+                {bust ? "BUST — hit a rock" : `${meters}m · ${mult.toFixed(2)}× multiplier`}
+              </div>
+              <div style={{
+                fontSize: 22, fontWeight: 800, marginTop: 2,
+                color: won ? "#7fe3ff" : bust ? "#ff8b8b" : "#ffb464",
+              }}>
+                {Number(formatEther(BigInt(round.payoutWei))).toFixed(6)} ETH
+              </div>
+              {round.txReveal && (
+                <a href={`${explorerForCannonChain(chainId)}/tx/${round.txReveal}`}
+                   target="_blank" rel="noopener noreferrer"
+                   style={{ fontSize: 10, opacity: 0.7, color: "#7fe3ff", display: "block", marginTop: 2, pointerEvents: "auto" }}>
+                  reveal tx ↗
+                </a>
+              )}
+            </div>
+          );
+        })()}
 
-        {/* Top-right HUD: bet input with preset buttons */}
-        <div style={{ ...hudChipStyle("top-right"), flexDirection: "column", gap: 6, minWidth: 220, alignItems: "stretch" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "#7b94b8" }}>
-            <span>your bet</span>
+        {round.status === "error" && (
+          <div style={{
+            position: "absolute", left: "50%", top: 16, transform: "translateX(-50%)",
+            padding: "10px 18px",
+            background: "rgba(40,0,0,0.85)",
+            border: "1px solid rgba(255,116,116,0.45)",
+            borderRadius: 10,
+            color: "#ff8b8b", fontFamily: "ui-monospace, monospace", fontSize: 12,
+            maxWidth: "80%", pointerEvents: "none",
+          }}>
+            {round.error.split("\n")[0]}
+          </div>
+        )}
+      </div>
+
+      {/* Control dock — a single clean bar below the stage with the
+          bet, angle, and FIRE button. This is where all controls live;
+          nothing is overlaid on the game itself. */}
+      <div style={{
+        background: "linear-gradient(180deg, rgba(2,24,48,0.95) 0%, #010a1e 100%)",
+        borderTop: "1px solid rgba(127,227,255,0.18)",
+        padding: "10px 14px 10px",
+        display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap",
+        color: "#cfe7ff", fontFamily: "system-ui, sans-serif",
+      }}>
+        {/* Bet block */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 140 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7b94b8" }}>
+            <span>bet</span>
             <span style={{ color: "#cfe7ff" }}>{Number(effectiveBetEth).toFixed(5)}</span>
           </div>
           <input
@@ -244,7 +293,7 @@ export function CannonGame() {
             value={betInput}
             onChange={e => setBetInput(e.target.value)}
             style={{
-              background: "rgba(0,0,0,0.45)", border: "1px solid rgba(127,227,255,0.3)",
+              background: "rgba(0,0,0,0.5)", border: "1px solid rgba(127,227,255,0.25)",
               color: "#cfe7ff", padding: "6px 8px", borderRadius: 6,
               fontFamily: "ui-monospace, monospace", fontSize: 12, outline: "none",
               width: "100%", boxSizing: "border-box",
@@ -264,152 +313,70 @@ export function CannonGame() {
           </div>
         </div>
 
-        {/* Bottom HUD: angle slider + FIRE button, full width */}
+        {/* Angle slider */}
         <div style={{
-          position: "absolute", left: 12, right: 12, bottom: 12,
-          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          flex: "1 1 200px",
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "8px 14px",
+          background: "rgba(0,0,0,0.25)",
+          border: "1px solid rgba(127,227,255,0.15)",
+          borderRadius: 10,
         }}>
-          <div style={{
-            flex: "1 1 220px",
-            display: "flex", alignItems: "center", gap: 10,
-            padding: "10px 14px",
-            background: "rgba(2,24,48,0.78)",
-            border: "1px solid rgba(127,227,255,0.3)",
-            borderRadius: 10,
-            backdropFilter: "blur(6px)",
-          }}>
-            <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7b94b8", minWidth: 44 }}>
-              angle
-            </span>
-            <input
-              type="range"
-              min={MIN_ANGLE}
-              max={MAX_ANGLE}
-              step={1}
-              value={angle}
-              onChange={e => setAngle(Number(e.target.value))}
-              disabled={sliderLocked}
-              style={{ flex: 1, accentColor: "#7fe3ff" }}
-            />
-            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, color: "#cfe7ff", minWidth: 38, textAlign: "right" }}>
-              {angle}°
-            </span>
-          </div>
-          <button
-            onClick={onButtonClick}
-            disabled={buttonDisabled}
-            style={{
-              ...btnStyle("#ffd76a"),
-              padding: "14px 28px", fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",
-              minWidth: 180, boxShadow: "0 8px 22px rgba(255,215,106,0.25)",
-            }}
-          >
-            {buttonLabel}
-          </button>
+          <span style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7b94b8", minWidth: 38 }}>angle</span>
+          <input
+            type="range"
+            min={MIN_ANGLE}
+            max={MAX_ANGLE}
+            step={1}
+            value={angle}
+            onChange={e => setAngle(Number(e.target.value))}
+            disabled={sliderLocked}
+            style={{ flex: 1, accentColor: "#7fe3ff" }}
+          />
+          <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, color: "#cfe7ff", minWidth: 36, textAlign: "right" }}>
+            {angle}°
+          </span>
         </div>
 
-        {/* Result overlay — shows on top of the canvas at resolved */}
-        {round.status === "resolved" && (() => {
-          const mult = distanceBpToMultiplier(round.distanceBp);
-          const meters = distanceBpToMeters(round.distanceBp);
-          const won = BigInt(round.payoutWei) > BigInt(round.betWei);
-          const bust = round.distanceBp === 0;
-          return (
-            <div style={{
-              position: "absolute", left: "50%", top: 18, transform: "translateX(-50%)",
-              padding: "12px 22px",
-              background: "rgba(2,24,48,0.85)",
-              border: "1px solid rgba(127,227,255,0.45)",
-              borderRadius: 12, color: "#cfe7ff",
-              fontFamily: "ui-monospace, monospace", textAlign: "center",
-              backdropFilter: "blur(8px)",
-              minWidth: 260,
-            }}>
-              <div style={{ fontSize: 12, opacity: 0.8 }}>
-                {bust ? "BUST — hit a rock"
-                      : `${meters}m · ${mult.toFixed(2)}× multiplier`}
-              </div>
-              <div style={{
-                fontSize: 26, fontWeight: 800, marginTop: 2,
-                color: won ? "#7fe3ff" : bust ? "#ff8b8b" : "#ffb464",
+        {/* FIRE button */}
+        <button
+          onClick={onButtonClick}
+          disabled={buttonDisabled}
+          style={{
+            ...btnStyle("#ffd76a"),
+            padding: "12px 26px", fontSize: 14, fontWeight: 800, letterSpacing: "0.1em",
+            minWidth: 170,
+          }}
+        >
+          {buttonLabel}
+        </button>
+
+        {/* Wallet / chain row — hugs the right on wide screens, wraps
+            to its own row on narrow screens. */}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <ConnectButton chainStatus="icon" />
+          {isConnected && SUPPORTED_CHAINS.map(c => (
+            <button key={c.id}
+              onClick={() => switchChain({ chainId: c.id })}
+              disabled={switching || chainId === c.id}
+              style={{
+                ...btnStyle(chainId === c.id ? "#7fe3ff" : "rgba(127,227,255,0.18)"),
+                color: chainId === c.id ? "#021830" : "#cfe7ff",
+                minWidth: 0, padding: "6px 10px", fontSize: 11,
               }}>
-                {Number(formatEther(BigInt(round.payoutWei))).toFixed(6)} ETH
-              </div>
-              <div style={{ fontSize: 10, opacity: 0.55 }}>
-                bet {Number(formatEther(BigInt(round.betWei))).toFixed(5)} ETH
-              </div>
-              {round.txReveal && (
-                <a href={`${explorerForCannonChain(chainId)}/tx/${round.txReveal}`}
-                   target="_blank" rel="noopener noreferrer"
-                   style={{ fontSize: 10, opacity: 0.7, color: "#7fe3ff", display: "block", marginTop: 2 }}>
-                  reveal tx ↗
-                </a>
-              )}
-            </div>
-          );
-        })()}
-
-        {round.status === "error" && (
-          <div style={{
-            position: "absolute", left: "50%", top: 18, transform: "translateX(-50%)",
-            padding: "10px 18px",
-            background: "rgba(40,0,0,0.85)",
-            border: "1px solid rgba(255,116,116,0.45)",
-            borderRadius: 10,
-            color: "#ff8b8b", fontFamily: "ui-monospace, monospace", fontSize: 12,
-            maxWidth: "80%",
-          }}>
-            {round.error.split("\n")[0]}
-          </div>
-        )}
+              {chainId === c.id ? "✓ " : ""}{c.name}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Wallet + chain controls below the stage */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
-        <ConnectButton chainStatus="icon" />
-        {isConnected && SUPPORTED_CHAINS.map(c => (
-          <button key={c.id}
-            onClick={() => switchChain({ chainId: c.id })}
-            disabled={switching || chainId === c.id}
-            style={{
-              ...btnStyle(chainId === c.id ? "#7fe3ff" : "rgba(127,227,255,0.18)"),
-              color: chainId === c.id ? "#021830" : "#cfe7ff",
-              minWidth: 0, padding: "8px 14px", fontSize: 12,
-            }}>
-            {chainId === c.id ? "✓ " : ""}{c.name}
-          </button>
-        ))}
-        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#7b94b8", marginLeft: 6 }}>
-          RTP ~93% · 5× cap
-        </span>
-      </div>
       {unsupportedChain && (
-        <div style={{ fontSize: 12, color: "#ff9b5a", fontFamily: "ui-monospace, monospace", textAlign: "center" }}>
+        <div style={{ position: "absolute", left: 12, bottom: 96, fontSize: 11, color: "#ff9b5a", fontFamily: "ui-monospace, monospace" }}>
           switch to Ink Sepolia or Soneium Minato to play
         </div>
       )}
     </div>
   );
-}
-
-// ─── HUD helpers ──
-const hudDimText: React.CSSProperties = {
-  fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "#7b94b8",
-};
-function hudChipStyle(corner: "top-left" | "top-right"): React.CSSProperties {
-  return {
-    position: "absolute",
-    top: 12,
-    [corner === "top-left" ? "left" : "right"]: 12,
-    display: "flex", alignItems: "center", gap: 6,
-    padding: "8px 12px",
-    background: "rgba(2,24,48,0.78)",
-    border: "1px solid rgba(127,227,255,0.3)",
-    borderRadius: 10,
-    fontFamily: "ui-monospace, monospace", fontSize: 12, color: "#cfe7ff",
-    backdropFilter: "blur(6px)",
-    maxWidth: "45%",
-  };
 }
 
 // ─── CANVAS — animates the cannon + squid flight ──
@@ -518,8 +485,6 @@ function CannonCanvas({
         width: "100%",
         height: "100%",
         background: "#021830",
-        border: "1px solid rgba(120, 200, 255, 0.18)",
-        borderRadius: 14,
         display: "block",
       }}
     />
