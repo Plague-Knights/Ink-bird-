@@ -97,6 +97,11 @@ export function CannonGame() {
   // Result toast visibility — kept off during the flight animation so
   // the payout doesn't reveal before the squid has actually landed.
   const [showResult, setShowResult] = useState(false);
+  // Demo mode — when on, FIRE runs a client-only simulation with a
+  // random distance and no wallet/tx/chain required, so visitors can
+  // try the game without paying. Uses the same round state machine so
+  // animations/physics are identical to real play.
+  const [demoMode, setDemoMode] = useState(true);
 
   useEffect(() => {
     if (round.status !== "resolved") {
@@ -163,7 +168,47 @@ export function CannonGame() {
     return parsed;
   }, [betInput, minBet, maxBet]);
 
+  // Client-only demo: skip the whole open/fire/reveal dance and just
+  // roll a local distance on the same 7-band shape. Purely visual,
+  // does not touch the chain — so no wallet, no gas, no payout.
+  function fireDemo() {
+    setLayoutSeed((Date.now() & 0xffff) | 1);
+    // Band weights roughly mirror the contract's 7-band curve: heavy
+    // weight at mid distances, a thin jackpot tail, a non-zero bust.
+    const bands = [
+      { w: 10, min: 0,      max: 0      }, // BUST
+      { w: 22, min: 5_000,  max: 12_000 },
+      { w: 28, min: 12_000, max: 20_000 },
+      { w: 20, min: 20_000, max: 30_000 },
+      { w: 12, min: 30_000, max: 40_000 },
+      { w: 6,  min: 40_000, max: 48_000 },
+      { w: 2,  min: 48_000, max: 50_000 }, // 5x tail
+    ];
+    const total = bands.reduce((a, b) => a + b.w, 0);
+    let pick = Math.random() * total;
+    let band = bands[0]!;
+    for (const b of bands) {
+      if (pick < b.w) { band = b; break; }
+      pick -= b.w;
+    }
+    const distanceBp = band.min + Math.round(Math.random() * (band.max - band.min));
+    const demoBet = 10_000_000_000_000_000n; // 0.01 ETH placeholder
+    const payoutWei = (demoBet * BigInt(distanceBp)) / 10_000n;
+    // Brief "firing" window so the muzzle flash + puff state plays,
+    // then resolve. Mirrors the real flow without any round polling.
+    setRound({ status: "awaiting_play" });
+    setTimeout(() => {
+      setRound({
+        status: "resolved",
+        betWei: String(demoBet),
+        payoutWei: String(payoutWei),
+        distanceBp,
+      });
+    }, 650);
+  }
+
   async function fire() {
+    if (demoMode) { fireDemo(); return; }
     if (!isConnected || !CANNON_ADDR || effectiveBetWei == null) return;
     setLayoutSeed((Date.now() & 0xffff) | 1); // new seabed per round
     setRound({ status: "opening" });
@@ -204,22 +249,26 @@ export function CannonGame() {
   const effectiveBetEth = effectiveBetWei != null ? formatEther(effectiveBetWei) : "—";
 
   const buttonLabel = (() => {
-    if (writing)    return "Confirm in wallet…";
-    if (confirming) return "Submitting fire…";
+    if (!demoMode && writing)    return "Confirm in wallet…";
+    if (!demoMode && confirming) return "Submitting fire…";
     switch (round.status) {
       case "opening":       return "Opening round…";
-      case "awaiting_play": return "Awaiting fire tx…";
+      case "awaiting_play": return demoMode ? "Firing…" : "Awaiting fire tx…";
       case "revealing":     return "Resolving on-chain…";
-      case "resolved":      return showResult ? "Fire again" : "Landing…";
+      case "resolved":      return showResult ? (demoMode ? "Fire again (DEMO)" : "Fire again") : "Landing…";
       case "error":         return "Try again";
-      default:              return `FIRE (${Number(effectiveBetEth).toFixed(4)} ETH)`;
+      default:              return demoMode
+        ? "FIRE (DEMO)"
+        : `FIRE (${Number(effectiveBetEth).toFixed(4)} ETH)`;
     }
   })();
 
-  const buttonDisabled = !isConnected || unsupportedChain || writing || confirming
-    || round.status === "opening" || round.status === "awaiting_play" || round.status === "revealing"
-    || (round.status === "resolved" && !showResult)
-    || effectiveBetWei == null;
+  const buttonDisabled = demoMode
+    ? round.status === "awaiting_play" || (round.status === "resolved" && !showResult)
+    : (!isConnected || unsupportedChain || writing || confirming
+      || round.status === "opening" || round.status === "awaiting_play" || round.status === "revealing"
+      || (round.status === "resolved" && !showResult)
+      || effectiveBetWei == null);
 
   const onButtonClick = round.status === "resolved" || round.status === "error"
     ? resetForNextPlay
@@ -242,6 +291,26 @@ export function CannonGame() {
           bet={effectiveBetWei}
           angle={angle}
         />
+
+        {/* Demo badge — small top-left chip so players always know
+            whether they're playing for real or just trying it out. */}
+        <div style={{
+          position: "absolute", top: 12, left: 12,
+          padding: "5px 10px",
+          background: demoMode ? "rgba(255, 215, 106, 0.9)" : "rgba(127, 227, 255, 0.9)",
+          color: "#021830",
+          fontFamily: "ui-monospace, monospace",
+          fontSize: 10,
+          fontWeight: 800,
+          letterSpacing: "0.2em",
+          borderRadius: 999,
+          boxShadow: demoMode
+            ? "0 4px 16px rgba(255,215,106,0.4)"
+            : "0 4px 16px rgba(127,227,255,0.35)",
+          pointerEvents: "none",
+        }}>
+          {demoMode ? "DEMO · FREE" : "REAL MONEY"}
+        </div>
 
         {round.status === "resolved" && showResult && (() => {
           const mult = distanceBpToMultiplier(round.distanceBp);
@@ -294,59 +363,97 @@ export function CannonGame() {
         )}
       </div>
 
-      {/* Control dock — a single clean bar below the stage with the
-          bet, angle, and FIRE button. This is where all controls live;
-          nothing is overlaid on the game itself. */}
+      {/* Control dock — cleaner, tighter, with a prominent DEMO toggle
+          so visitors can try the game without paying. Everything lives
+          here; nothing is overlaid on the game itself. */}
       <div style={{
-        background: "linear-gradient(180deg, rgba(2,24,48,0.95) 0%, #010a1e 100%)",
-        borderTop: "1px solid rgba(127,227,255,0.18)",
-        padding: "10px 14px 10px",
-        display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap",
-        color: "#cfe7ff", fontFamily: "system-ui, sans-serif",
+        background: "linear-gradient(180deg, rgba(4,18,38,0.96) 0%, rgba(1,8,22,0.98) 100%)",
+        borderTop: `1px solid ${demoMode ? "rgba(255,215,106,0.4)" : "rgba(127,227,255,0.2)"}`,
+        boxShadow: demoMode ? "0 -2px 24px rgba(255,215,106,0.12)" : "0 -2px 24px rgba(127,227,255,0.1)",
+        padding: "12px 14px 12px",
+        display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap",
+        color: "#cfe7ff", fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
       }}>
-        {/* Bet block */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 140 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7b94b8" }}>
-            <span>bet</span>
-            <span style={{ color: "#cfe7ff" }}>{Number(effectiveBetEth).toFixed(5)}</span>
-          </div>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder={`max ${maxBetEth}`}
-            value={betInput}
-            onChange={e => setBetInput(e.target.value)}
-            style={{
-              background: "rgba(0,0,0,0.5)", border: "1px solid rgba(127,227,255,0.25)",
-              color: "#cfe7ff", padding: "6px 8px", borderRadius: 6,
-              fontFamily: "ui-monospace, monospace", fontSize: 12, outline: "none",
-              width: "100%", boxSizing: "border-box",
-            }}
-          />
-          <div style={{ display: "flex", gap: 4 }}>
-            {[0.1, 0.25, 0.5].map(frac => (
-              <button key={frac}
-                onClick={() => {
-                  if (maxBet != null) setBetInput(formatEther(((maxBet as bigint) * BigInt(Math.round(frac * 1000))) / 1000n));
+        {/* Mode toggle — DEMO vs REAL. Mode swap resets any round in flight. */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 0,
+          background: "rgba(0,0,0,0.45)",
+          border: "1px solid rgba(127,227,255,0.18)",
+          borderRadius: 999,
+          padding: 3,
+        }}>
+          {(["demo", "real"] as const).map(m => {
+            const active = (m === "demo") === demoMode;
+            return (
+              <button
+                key={m}
+                onClick={() => { setDemoMode(m === "demo"); resetForNextPlay(); }}
+                style={{
+                  padding: "7px 14px",
+                  border: "none",
+                  borderRadius: 999,
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: "0.14em",
+                  cursor: "pointer",
+                  background: active
+                    ? (m === "demo" ? "#ffd76a" : "#7fe3ff")
+                    : "transparent",
+                  color: active ? "#021830" : "#7b94b8",
+                  transition: "background 120ms ease-out, color 120ms ease-out",
                 }}
-                style={presetBtnStyle}>
-                {Math.round(frac * 100)}%
+              >
+                {m === "demo" ? "DEMO" : "REAL"}
               </button>
-            ))}
-            <button onClick={() => setBetInput("")} style={presetBtnStyle}>MAX</button>
-          </div>
+            );
+          })}
         </div>
+
+        {/* Bet block — hidden in demo mode since there's no wager. */}
+        {!demoMode && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 140 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#7b94b8" }}>
+              <span>bet (eth)</span>
+              <span style={{ color: "#cfe7ff" }}>{Number(effectiveBetEth).toFixed(5)}</span>
+            </div>
+            <input
+              type="text"
+              inputMode="decimal"
+              placeholder={`max ${maxBetEth}`}
+              value={betInput}
+              onChange={e => setBetInput(e.target.value)}
+              style={{
+                background: "rgba(0,0,0,0.5)", border: "1px solid rgba(127,227,255,0.25)",
+                color: "#cfe7ff", padding: "7px 9px", borderRadius: 7,
+                fontFamily: "ui-monospace, monospace", fontSize: 12, outline: "none",
+                width: "100%", boxSizing: "border-box",
+              }}
+            />
+            <div style={{ display: "flex", gap: 4 }}>
+              {[0.1, 0.25, 0.5].map(frac => (
+                <button key={frac}
+                  onClick={() => {
+                    if (maxBet != null) setBetInput(formatEther(((maxBet as bigint) * BigInt(Math.round(frac * 1000))) / 1000n));
+                  }}
+                  style={presetBtnStyle}>
+                  {Math.round(frac * 100)}%
+                </button>
+              ))}
+              <button onClick={() => setBetInput("")} style={presetBtnStyle}>MAX</button>
+            </div>
+          </div>
+        )}
 
         {/* Angle slider */}
         <div style={{
           flex: "1 1 200px",
           display: "flex", alignItems: "center", gap: 10,
-          padding: "8px 14px",
-          background: "rgba(0,0,0,0.25)",
-          border: "1px solid rgba(127,227,255,0.15)",
-          borderRadius: 10,
+          padding: "10px 14px",
+          background: "rgba(0,0,0,0.3)",
+          border: "1px solid rgba(127,227,255,0.18)",
+          borderRadius: 12,
         }}>
-          <span style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7b94b8", minWidth: 38 }}>angle</span>
+          <span style={{ fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", color: "#7b94b8", minWidth: 38 }}>angle</span>
           <input
             type="range"
             min={MIN_ANGLE}
@@ -362,36 +469,40 @@ export function CannonGame() {
           </span>
         </div>
 
-        {/* FIRE button */}
+        {/* FIRE button — yellow in demo, cyan in real for visual clarity. */}
         <button
           onClick={onButtonClick}
           disabled={buttonDisabled}
           style={{
-            ...btnStyle("#ffd76a"),
-            padding: "12px 26px", fontSize: 14, fontWeight: 800, letterSpacing: "0.1em",
-            minWidth: 170,
+            ...btnStyle(demoMode ? "#ffd76a" : "#7fe3ff"),
+            padding: "14px 28px", fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",
+            minWidth: 200,
+            boxShadow: demoMode
+              ? "0 10px 30px rgba(255,215,106,0.35)"
+              : "0 10px 30px rgba(127,227,255,0.3)",
           }}
         >
           {buttonLabel}
         </button>
 
-        {/* Wallet / chain row — hugs the right on wide screens, wraps
-            to its own row on narrow screens. */}
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <ConnectButton chainStatus="icon" />
-          {isConnected && SUPPORTED_CHAINS.map(c => (
-            <button key={c.id}
-              onClick={() => switchChain({ chainId: c.id })}
-              disabled={switching || chainId === c.id}
-              style={{
-                ...btnStyle(chainId === c.id ? "#7fe3ff" : "rgba(127,227,255,0.18)"),
-                color: chainId === c.id ? "#021830" : "#cfe7ff",
-                minWidth: 0, padding: "6px 10px", fontSize: 11,
-              }}>
-              {chainId === c.id ? "✓ " : ""}{c.name}
-            </button>
-          ))}
-        </div>
+        {/* Wallet / chain row — hidden in demo mode. */}
+        {!demoMode && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <ConnectButton chainStatus="icon" />
+            {isConnected && SUPPORTED_CHAINS.map(c => (
+              <button key={c.id}
+                onClick={() => switchChain({ chainId: c.id })}
+                disabled={switching || chainId === c.id}
+                style={{
+                  ...btnStyle(chainId === c.id ? "#7fe3ff" : "rgba(127,227,255,0.18)"),
+                  color: chainId === c.id ? "#021830" : "#cfe7ff",
+                  minWidth: 0, padding: "7px 11px", fontSize: 11,
+                }}>
+                {chainId === c.id ? "✓ " : ""}{c.name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {unsupportedChain && (
