@@ -37,6 +37,9 @@ export function ChestsGame() {
   const [seedHash, setSeedHash] = useState<string | null>(null);
   const [visualSeed, setVisualSeed] = useState<number>(0);
   const [turbo, setTurbo] = useState<TurboLevel>("off");
+  // Demo mode — lets visitors try the chests flow without a wallet or
+  // on-chain transaction. Client-only roll on the same 7-band curve.
+  const [demoMode, setDemoMode] = useState(true);
   const [betInput, setBetInput] = useState<string>(""); // empty → defaults to max
 
   const readAddress = CHESTS_ADDRESS ?? undefined;
@@ -92,7 +95,44 @@ export function ChestsGame() {
     return parsed;
   }, [betInput, minBet, maxBet]);
 
+  // Client-only demo roll on the same 7-band curve the contract uses.
+  function playDemo() {
+    setVisualSeed(Math.floor(Math.random() * 0xffffffff));
+    const bands = [
+      { w: 80,  m: 0,    min: 0,    max: 0    }, // BUST 8%
+      { w: 150, m: 700,  min: 700,  max: 700  },
+      { w: 300, m: 900,  min: 900,  max: 900  },
+      { w: 300, m: 1050, min: 1050, max: 1050 },
+      { w: 140, m: 1200, min: 1200, max: 1200 },
+      { w: 25,  m: 1800, min: 1800, max: 1800 },
+      { w: 5,   m: 5000, min: 5000, max: 5000 }, // 5x jackpot 0.5%
+    ];
+    const total = bands.reduce((a, b) => a + b.w, 0);
+    let pick = Math.random() * total;
+    let band = bands[0]!;
+    for (const b of bands) {
+      if (pick < b.w) { band = b; break; }
+      pick -= b.w;
+    }
+    const demoBet = 10_000_000_000_000_000n; // 0.01 ETH placeholder
+    const multiplierThousandths = band.m;
+    const payoutWei = (demoBet * BigInt(multiplierThousandths)) / 1000n;
+    setRound({ status: "awaiting_play" });
+    // Hold "awaiting" briefly so the visual flow matches the real one,
+    // then resolve. AutoFlapper runs its whole run regardless; the
+    // result card is what players actually watch for.
+    setTimeout(() => {
+      setRound({
+        status: "resolved",
+        betWei: String(demoBet),
+        payoutWei: String(payoutWei),
+        multiplierThousandths,
+      });
+    }, 500);
+  }
+
   async function play() {
+    if (demoMode) { playDemo(); return; }
     if (!isConnected || !CHESTS_ADDRESS || effectiveBetWei == null) return;
     setRound({ status: "opening" });
     try {
@@ -133,21 +173,25 @@ export function ChestsGame() {
   const effectiveBetEth = effectiveBetWei != null ? formatEther(effectiveBetWei) : "—";
 
   const buttonLabel = (() => {
-    if (writing)    return "Confirm in wallet…";
-    if (confirming) return "Submitting play…";
+    if (!demoMode && writing)    return "Confirm in wallet…";
+    if (!demoMode && confirming) return "Submitting play…";
     switch (round.status) {
       case "opening":      return "Opening round…";
-      case "awaiting_play":return "Awaiting play tx…";
+      case "awaiting_play":return demoMode ? "Playing…" : "Awaiting play tx…";
       case "revealing":    return "Resolving on-chain…";
-      case "resolved":     return "Play again";
+      case "resolved":     return demoMode ? "Play again (DEMO)" : "Play again";
       case "error":        return "Try again";
-      default:             return `Play (${Number(effectiveBetEth).toFixed(4)} ETH)`;
+      default:             return demoMode
+        ? "PLAY (DEMO)"
+        : `Play (${Number(effectiveBetEth).toFixed(4)} ETH)`;
     }
   })();
 
-  const buttonDisabled = !isConnected || unsupportedChain || writing || confirming
-    || round.status === "opening" || round.status === "awaiting_play" || round.status === "revealing"
-    || effectiveBetWei == null;
+  const buttonDisabled = demoMode
+    ? round.status === "awaiting_play"
+    : (!isConnected || unsupportedChain || writing || confirming
+      || round.status === "opening" || round.status === "awaiting_play" || round.status === "revealing"
+      || effectiveBetWei == null);
 
   const onButtonClick = round.status === "resolved" || round.status === "error"
     ? resetForNextPlay
@@ -158,15 +202,54 @@ export function ChestsGame() {
       display: "flex", flexDirection: "column", alignItems: "center",
       gap: 16, width: "100%", maxWidth: 480, margin: "0 auto",
     }}>
+      {/* DEMO / REAL mode pill — visible above the stats row. */}
       <div style={{
-        width: "100%", display: "flex", justifyContent: "space-between",
-        alignItems: "center", padding: "10px 14px", background: "rgba(120,200,255,0.05)",
-        border: "1px solid rgba(120,200,255,0.15)", borderRadius: 12, fontFamily: "ui-monospace, monospace", fontSize: 12, color: "#cfe7ff",
+        display: "flex", gap: 0, padding: 3,
+        background: "rgba(0,0,0,0.45)",
+        border: `1px solid ${demoMode ? "rgba(255,215,106,0.35)" : "rgba(127,227,255,0.25)"}`,
+        borderRadius: 999,
+        boxShadow: demoMode
+          ? "0 4px 18px rgba(255,215,106,0.12)"
+          : "0 4px 18px rgba(127,227,255,0.12)",
       }}>
-        <span>min <b>{Number(minBetEth).toFixed(4)} ETH</b></span>
-        <span>max <b>{Number(maxBetEth).toFixed(4)} ETH</b></span>
-        <span>RTP <b>92.8%</b></span>
+        {(["demo", "real"] as const).map(m => {
+          const active = (m === "demo") === demoMode;
+          return (
+            <button
+              key={m}
+              onClick={() => { setDemoMode(m === "demo"); resetForNextPlay(); }}
+              style={{
+                padding: "7px 16px",
+                border: "none",
+                borderRadius: 999,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: "0.14em",
+                cursor: "pointer",
+                background: active
+                  ? (m === "demo" ? "#ffd76a" : "#7fe3ff")
+                  : "transparent",
+                color: active ? "#021830" : "#7b94b8",
+                transition: "background 120ms ease-out, color 120ms ease-out",
+              }}
+            >
+              {m === "demo" ? "DEMO · FREE" : "REAL MONEY"}
+            </button>
+          );
+        })}
       </div>
+
+      {!demoMode && (
+        <div style={{
+          width: "100%", display: "flex", justifyContent: "space-between",
+          alignItems: "center", padding: "10px 14px", background: "rgba(120,200,255,0.05)",
+          border: "1px solid rgba(120,200,255,0.15)", borderRadius: 12, fontFamily: "ui-monospace, monospace", fontSize: 12, color: "#cfe7ff",
+        }}>
+          <span>min <b>{Number(minBetEth).toFixed(4)} ETH</b></span>
+          <span>max <b>{Number(maxBetEth).toFixed(4)} ETH</b></span>
+          <span>RTP <b>92.8%</b></span>
+        </div>
+      )}
 
       <AutoFlapper
         seed={visualSeed || undefined}
@@ -174,40 +257,42 @@ export function ChestsGame() {
         demo={round.status === "idle" || round.status === "error"}
       />
 
-      <div style={{
-        width: "100%", display: "flex", flexDirection: "column", gap: 8,
-        padding: "12px 14px", background: "rgba(255,255,255,0.03)",
-        border: "1px solid rgba(120,200,255,0.15)", borderRadius: 12,
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b94b8" }}>
-          <span>your bet</span>
-          <span style={{ color: "#cfe7ff" }}>{Number(effectiveBetEth).toFixed(6)} ETH</span>
+      {!demoMode && (
+        <div style={{
+          width: "100%", display: "flex", flexDirection: "column", gap: 8,
+          padding: "12px 14px", background: "rgba(255,255,255,0.03)",
+          border: "1px solid rgba(120,200,255,0.15)", borderRadius: 12,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#7b94b8" }}>
+            <span>your bet</span>
+            <span style={{ color: "#cfe7ff" }}>{Number(effectiveBetEth).toFixed(6)} ETH</span>
+          </div>
+          <input
+            type="text"
+            inputMode="decimal"
+            placeholder={`0.01 (max ${maxBetEth} ETH)`}
+            value={betInput}
+            onChange={e => setBetInput(e.target.value)}
+            style={{
+              background: "rgba(0,0,0,0.35)", border: "1px solid rgba(120,200,255,0.22)",
+              color: "#cfe7ff", padding: "8px 10px", borderRadius: 8,
+              fontFamily: "ui-monospace, monospace", fontSize: 13, outline: "none",
+            }}
+          />
+          <div style={{ display: "flex", gap: 6 }}>
+            {[0.1, 0.25, 0.5].map(frac => (
+              <button key={frac}
+                onClick={() => {
+                  if (maxBet != null) setBetInput(formatEther(((maxBet as bigint) * BigInt(Math.round(frac * 1000))) / 1000n));
+                }}
+                style={presetBtnStyle}>
+                {Math.round(frac * 100)}%
+              </button>
+            ))}
+            <button onClick={() => setBetInput("")} style={presetBtnStyle}>MAX</button>
+          </div>
         </div>
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder={`0.01 (max ${maxBetEth} ETH)`}
-          value={betInput}
-          onChange={e => setBetInput(e.target.value)}
-          style={{
-            background: "rgba(0,0,0,0.35)", border: "1px solid rgba(120,200,255,0.22)",
-            color: "#cfe7ff", padding: "8px 10px", borderRadius: 8,
-            fontFamily: "ui-monospace, monospace", fontSize: 13, outline: "none",
-          }}
-        />
-        <div style={{ display: "flex", gap: 6 }}>
-          {[0.1, 0.25, 0.5].map(frac => (
-            <button key={frac}
-              onClick={() => {
-                if (maxBet != null) setBetInput(formatEther(((maxBet as bigint) * BigInt(Math.round(frac * 1000))) / 1000n));
-              }}
-              style={presetBtnStyle}>
-              {Math.round(frac * 100)}%
-            </button>
-          ))}
-          <button onClick={() => setBetInput("")} style={presetBtnStyle}>MAX</button>
-        </div>
-      </div>
+      )}
 
       {/* Explainer — clarifies that the flying animation is just the
           visual, and the contract's single commit-reveal roll is what
@@ -229,7 +314,12 @@ export function ChestsGame() {
         on reveal.
       </div>
 
-      {effectiveBetWei != null && (
+      {(() => {
+        // In demo mode, show what a 0.01 ETH bet would pay so the table
+        // is still illustrative even before the wallet loads min/max.
+        const tableBet = effectiveBetWei ?? (demoMode ? 10_000_000_000_000_000n : null);
+        if (tableBet == null) return null;
+        return (
         <div style={{
           width: "100%", padding: "12px 14px",
           background: "rgba(127,227,255,0.04)",
@@ -256,7 +346,7 @@ export function ChestsGame() {
               { label: "1.8×",  pct: "2.5%", mult: 1800, color: "#ffd76a" },
               { label: "5× JACKPOT", pct: "0.5%", mult: 5000, color: "#7fe3ff" },
             ].map(row => {
-              const payout = (effectiveBetWei * BigInt(row.mult)) / 1000n;
+              const payout = (tableBet * BigInt(row.mult)) / 1000n;
               return (
                 <div key={row.label} style={{ display: "contents" }}>
                   <span style={{ color: row.color, fontWeight: 700 }}>{row.label}</span>
@@ -266,8 +356,14 @@ export function ChestsGame() {
               );
             })}
           </div>
+          {demoMode && (
+            <div style={{ marginTop: 6, fontSize: 10, color: "#7b94b8", textAlign: "right", letterSpacing: "0.06em" }}>
+              payouts shown for a 0.01 eth bet
+            </div>
+          )}
         </div>
-      )}
+        );
+      })()}
 
       {/* 3-tier speed pill — normal / turbo / super turbo */}
       <div style={{
@@ -343,33 +439,45 @@ export function ChestsGame() {
         </div>
       )}
 
-      <ConnectButton chainStatus="icon" />
-
-      {isConnected && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
-          {SUPPORTED_CHAINS.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => switchChain({ chainId: c.id })}
-              disabled={switching || chainId === c.id}
-              style={{
-                ...btnStyle(chainId === c.id ? "#7fe3ff" : "rgba(127,227,255,0.18)"),
-                color: chainId === c.id ? "#021830" : "#cfe7ff",
-                minWidth: 0, padding: "8px 14px", fontSize: 12,
-              }}
-            >
-              {chainId === c.id ? "✓ " : ""}{c.name}
-            </button>
-          ))}
-        </div>
+      {!demoMode && (
+        <>
+          <ConnectButton chainStatus="icon" />
+          {isConnected && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+              {SUPPORTED_CHAINS.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => switchChain({ chainId: c.id })}
+                  disabled={switching || chainId === c.id}
+                  style={{
+                    ...btnStyle(chainId === c.id ? "#7fe3ff" : "rgba(127,227,255,0.18)"),
+                    color: chainId === c.id ? "#021830" : "#cfe7ff",
+                    minWidth: 0, padding: "8px 14px", fontSize: 12,
+                  }}
+                >
+                  {chainId === c.id ? "✓ " : ""}{c.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {unsupportedChain && (
+            <div style={{ fontSize: 12, color: "#ff9b5a", fontFamily: "ui-monospace, monospace" }}>
+              switch to Ink Sepolia or Soneium Minato to play
+            </div>
+          )}
+        </>
       )}
-      {unsupportedChain && (
-        <div style={{ fontSize: 12, color: "#ff9b5a", fontFamily: "ui-monospace, monospace" }}>
-          switch to Ink Sepolia or Soneium Minato to play
-        </div>
-      )}
 
-      <button onClick={onButtonClick} disabled={buttonDisabled} style={btnStyle("#7fe3ff")}>
+      <button
+        onClick={onButtonClick}
+        disabled={buttonDisabled}
+        style={{
+          ...btnStyle(demoMode ? "#ffd76a" : "#7fe3ff"),
+          boxShadow: demoMode
+            ? "0 10px 30px rgba(255,215,106,0.3)"
+            : "0 10px 30px rgba(127,227,255,0.25)",
+        }}
+      >
         {buttonLabel}
       </button>
     </div>
