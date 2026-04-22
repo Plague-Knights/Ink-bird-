@@ -462,7 +462,7 @@ export function AutoFlapper({ seed: fixedSeed, turbo = "off", demo = false }: Pr
   }
 
   return (
-    <div style={{ width: "100%", maxWidth: 480, margin: "0 auto" }}>
+    <div style={{ width: "100%", margin: "0 auto" }}>
       <canvas
         ref={canvasRef}
         width={W}
