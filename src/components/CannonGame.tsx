@@ -21,7 +21,9 @@ import { GROUND_H, type Bird } from "@/lib/simulate";
 import { drawBird } from "@/lib/gameArt";
 
 const SUPPORTED_CHAINS = [inkSepolia, soneiumMinato] as const;
-const POLL_MS = 2500;
+// Round-state polling cadence. Under 1s stresses the DB on Railway
+// without meaningfully speeding up reveal; 1s is the useful floor.
+const POLL_MS = 1000;
 
 type RoundStatus =
   | { status: "idle" }
@@ -37,13 +39,17 @@ type RoundStatus =
     }
   | { status: "error"; error: string };
 
-// Canvas is tall widescreen — 1800:1200 = 1.5:1. Taller than before
-// (used to be 1200:800) so there's real vertical air for steep arcs
-// and the scene can fill more of the viewport.
-const PREVIEW_W = 1800;
-const PREVIEW_H = 1200;
-// Max visual distance on the canvas = 500m maps to frac = 0.95.
-// fracFromMeters(100) = 0.24 (close), fracFromMeters(500) = 0.95 (far edge).
+// World dimensions — the scene is bigger than any one viewport. The
+// canvas shows a zoomed-in side-scroller window into this world and the
+// camera pans as the squid flies, so nothing ever looks tiny.
+const WORLD_W = 2400;
+const WORLD_H = 1200;
+// Scene content is placed between stripStart and stripEnd in world
+// coordinates — the cannon sits at world x=92, the ground strip fills
+// from 150 to WORLD_W-40.
+const STRIP_START = 150;
+const STRIP_END = WORLD_W - 40;
+// Max visual distance = 500m maps to frac = 0.95 of the usable strip.
 function fracFromMeters(m: number): number {
   const clamped = Math.max(0, Math.min(500, m));
   return 0.05 + (clamped / 500) * 0.9;
@@ -53,6 +59,9 @@ function fracFromMeters(m: number): number {
 const MIN_ANGLE = 20;
 const MAX_ANGLE = 75;
 const DEFAULT_ANGLE = 45;
+// Squid flight animation length, in rAF frames (~60fps). Shorter =
+// snappier squid launch after the on-chain roll lands.
+const FLIGHT_FRAMES = 70;
 
 type Bubble = { x: number; y: number; r: number; tw: number };
 type Weed = { x: number; w: number; h: number; layer: 0 | 1 };
@@ -197,14 +206,14 @@ export function CannonGame() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
-      {/* Game stage — fills the viewport as much as possible. The width
-          is the smaller of (container width) or (vh-derived width that
-          preserves aspect), so the stage never pushes off-screen. HUD
-          panels overlay directly on top of the canvas. */}
+      {/* Game stage — fills the viewport. The canvas renders a
+          zoomed-in scrolling window into the world, so it doesn't need
+          to preserve the world's aspect; it can be any shape and the
+          camera pans horizontally as the squid flies. */}
       <div style={{
         position: "relative",
-        width: `min(100%, calc((100vh - 100px) * ${PREVIEW_W} / ${PREVIEW_H}))`,
-        aspectRatio: `${PREVIEW_W} / ${PREVIEW_H}`,
+        width: "100%",
+        height: "calc(100vh - 70px)",
         margin: "0 auto",
       }}>
         <CannonCanvas
@@ -432,24 +441,40 @@ function CannonCanvas({
     const c = canvasRef.current; if (!c) return;
     const ctx = c.getContext("2d"); if (!ctx) return;
 
+    // Keep the canvas's internal pixel grid in sync with its display
+    // size (times devicePixelRatio for crisp rendering). The render
+    // function reads canvas.width/height to know the viewport.
+    const resizeCanvas = () => {
+      const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+      const cw = Math.max(1, c.clientWidth);
+      const ch = Math.max(1, c.clientHeight);
+      c.width = Math.round(cw * dpr);
+      c.height = Math.round(ch * dpr);
+    };
+    resizeCanvas();
+    const ro = new ResizeObserver(resizeCanvas);
+    ro.observe(c);
+
     const bubbles: Bubble[] = [];
-    for (let i = 0; i < 130; i++) {
+    for (let i = 0; i < 170; i++) {
       bubbles.push({
-        x: (i * 97) % PREVIEW_W,
-        y: 30 + ((i * 173) % (PREVIEW_H - GROUND_H - 60)),
+        x: (i * 97) % WORLD_W,
+        y: 30 + ((i * 173) % (WORLD_H - GROUND_H - 60)),
         r: 1.2 + ((i * 7) % 20) / 10,
         tw: i,
       });
     }
     const weeds: Weed[] = [];
-    for (let i = 0; i < 18; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
-    for (let i = 0; i < 18; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
+    for (let i = 0; i < 24; i++) weeds.push({ layer: 0, x: i * 170 + 30, w: 150, h: 80 });
+    for (let i = 0; i < 24; i++) weeds.push({ layer: 1, x: i * 200 + 80, w: 180, h: 120 });
 
     const rocks = generateRocks(layoutSeed);
     const reefs = generateReefs(layoutSeed * 7919);
     const creatures = generateCreatures(layoutSeed * 31337);
     const midAirFish = generateMidAirFish(layoutSeed * 11117);
     const fishHits = new Set<number>(); // indices of midAirFish hit this flight
+    // Smoothed camera — lerps toward a target each frame.
+    const cameraRef = { x: 0 };
 
     resolvedAtFrameRef.current = null;
 
@@ -473,18 +498,20 @@ function CannonCanvas({
         ctx, bubbles, weeds, rocks, reefs, creatures, midAirFish, fishHits,
         frame, r, resolvedAtFrameRef.current, betRef.current,
         r.status === "resolved" ? lockedAngleRef.current : angleRef.current,
+        cameraRef,
       );
       raf = requestAnimationFrame(tick);
     };
     tick();
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
   }, [layoutSeed]);
 
   return (
     <canvas
       ref={canvasRef}
-      width={PREVIEW_W}
-      height={PREVIEW_H}
       style={{
         position: "absolute",
         inset: 0,
@@ -584,6 +611,11 @@ function generateMidAirFish(seed: number): MidAirFish[] {
 }
 
 // ─── RENDER ──
+// Camera-scrolling renderer. The canvas is a window into a wider world;
+// everything is drawn in world coordinates, then the context is scaled
+// and translated so the view stays zoomed in on the action. The world
+// is WORLD_W×WORLD_H; world height fills the canvas height, and the
+// camera x pans horizontally as the squid flies.
 function render(
   ctx: CanvasRenderingContext2D,
   bubbles: Bubble[],
@@ -596,11 +628,41 @@ function render(
   frame: number,
   round: RoundStatus,
   resolvedAtFrame: number | null,
-  bet: bigint | null,
+  _bet: bigint | null,
   angleDeg: number,
+  cameraRef: { x: number },
 ) {
-  const W2 = PREVIEW_W, H2 = PREVIEW_H;
-  ctx.clearRect(0, 0, W2, H2);
+  const cw = ctx.canvas.width;
+  const ch = ctx.canvas.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+
+  // World-height fills the canvas; pick a uniform scale so aspect is
+  // preserved. The visible world width then falls out of canvas width.
+  const scale = ch / WORLD_H;
+  const viewWorldW = cw / scale;
+  const W2 = WORLD_W, H2 = WORLD_H;
+
+  // Target camera x — show cannon on idle; follow squid during flight
+  // with a slight lead so we can see what's ahead. Clamped to world.
+  let targetCamX = 0;
+  if (round.status === "resolved" && resolvedAtFrame != null) {
+    const animProgress = Math.min(1, (frame - resolvedAtFrame) / FLIGHT_FRAMES);
+    const meters = distanceBpToMeters(round.distanceBp);
+    const bust = round.distanceBp === 0;
+    const landFrac = bust ? 0.08 : fracFromMeters(meters);
+    const landX = STRIP_START + (STRIP_END - STRIP_START) * landFrac;
+    // Start at cannon, drift toward landing through the animation.
+    const camStart = 0;
+    const camEnd = Math.max(0, Math.min(W2 - viewWorldW, landX - viewWorldW * 0.35));
+    targetCamX = camStart + (camEnd - camStart) * easeInOut(animProgress);
+  }
+  // Smooth toward target — lerp factor 0.12 keeps it snappy but not jittery.
+  cameraRef.x += (targetCamX - cameraRef.x) * 0.12;
+  const camX = cameraRef.x;
+
+  // Apply world→screen transform. Everything below draws in world coords.
+  ctx.setTransform(scale, 0, 0, scale, -camX * scale, 0);
 
   // Ocean gradient
   const sky = ctx.createLinearGradient(0, 0, 0, H2 - GROUND_H);
@@ -669,9 +731,8 @@ function render(
   ctx.fillStyle = "rgba(40,25,8,0.4)";
   ctx.fillRect(0, H2 - GROUND_H, W2, 2);
 
-  const stripStart = 150;
-  const stripEnd = W2 - 40;
-  const stripW = stripEnd - stripStart;
+  const stripStart = STRIP_START;
+  const stripW = STRIP_END - STRIP_START;
   const sandLevel = H2 - GROUND_H + 4;
 
   for (const reef of reefs) drawReef(ctx, stripStart + stripW * reef.x, sandLevel, reef, frame);
@@ -713,8 +774,7 @@ function render(
     // Animate flight over ~90 frames after resolution. Distance rolled
     // by the contract drives the landing x; a subtle post-apex bounce
     // plays for long-range rolls.
-    const flightFrames = 90;
-    const animProgress = Math.min(1, (frame - resolvedAtFrame) / flightFrames);
+    const animProgress = Math.min(1, (frame - resolvedAtFrame) / FLIGHT_FRAMES);
     const distanceBp = round.distanceBp;
     const meters = distanceBpToMeters(distanceBp);
     const bust = distanceBp === 0;
@@ -855,12 +915,13 @@ function render(
     }
   }
 
-  // Vignette
-  const vig = ctx.createRadialGradient(W2 / 2, H2 / 2, H2 * 0.45, W2 / 2, H2 / 2, H2 * 0.9);
+  // Vignette — draw in screen space so it always wraps the viewport.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const vig = ctx.createRadialGradient(cw / 2, ch / 2, ch * 0.45, cw / 2, ch / 2, Math.max(cw, ch) * 0.9);
   vig.addColorStop(0, "rgba(0,0,0,0)");
   vig.addColorStop(1, "rgba(0,0,0,0.4)");
   ctx.fillStyle = vig;
-  ctx.fillRect(0, 0, W2, H2);
+  ctx.fillRect(0, 0, cw, ch);
 }
 
 // ─── DRAW HELPERS (copied from LauncherPreview so this file stands alone) ──
@@ -1052,6 +1113,9 @@ function darken(hex: string, amount: number): string {
 function hexToRgb(hex: string) {
   const h = hex.replace("#", "");
   return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+}
+function easeInOut(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 function rgbToHex(r: number, g: number, b: number) {
   const c = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
