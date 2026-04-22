@@ -6,7 +6,7 @@ import { useAccount, useChainId, useSwitchChain, useWriteContract, useReadContra
 import { formatEther, parseEther } from "viem";
 import { CHESTS_ABI, chestsAddressForChain, explorerForChain } from "@/lib/chestsContract";
 import { inkSepolia, soneiumMinato } from "@/config/chains";
-import { AutoFlapper } from "@/components/AutoFlapper";
+import { AutoFlapper, type TurboLevel } from "@/components/AutoFlapper";
 
 const SUPPORTED_CHAINS = [inkSepolia, soneiumMinato] as const;
 
@@ -36,7 +36,7 @@ export function ChestsGame() {
   const [round, setRound] = useState<RoundStatus>({ status: "idle" });
   const [seedHash, setSeedHash] = useState<string | null>(null);
   const [visualSeed, setVisualSeed] = useState<number>(0);
-  const [turbo, setTurbo] = useState(false);
+  const [turbo, setTurbo] = useState<TurboLevel>("off");
   const [betInput, setBetInput] = useState<string>(""); // empty → defaults to max
 
   const readAddress = CHESTS_ADDRESS ?? undefined;
@@ -209,31 +209,57 @@ export function ChestsGame() {
         </div>
       </div>
 
+      {/* Explainer — clarifies that the flying animation is just the
+          visual, and the contract's single commit-reveal roll is what
+          actually picks the outcome + payout. */}
+      <div style={{
+        width: "100%", padding: "12px 14px",
+        background: "rgba(127,227,255,0.04)",
+        border: "1px solid rgba(127,227,255,0.14)",
+        borderRadius: 12, color: "#cfe7ff",
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif', fontSize: 12.5,
+        lineHeight: 1.55,
+      }}>
+        <div style={{ fontSize: 10, opacity: 0.7, letterSpacing: "0.18em", textTransform: "uppercase", marginBottom: 6 }}>
+          how it works
+        </div>
+        The squid auto-flies through a random run while the contract rolls <b>one</b>
+        commit-reveal outcome on-chain. The chests you see mid-flight are the visual flavor;
+        the <b>payout is the multiplier the contract lands on</b>, paid as bet × multiplier
+        on reveal.
+      </div>
+
       {effectiveBetWei != null && (
         <div style={{
-          width: "100%", padding: "10px 14px",
+          width: "100%", padding: "12px 14px",
           background: "rgba(127,227,255,0.04)",
           border: "1px solid rgba(127,227,255,0.18)",
           borderRadius: 12, color: "#cfe7ff",
           fontFamily: "ui-monospace, monospace", fontSize: 12,
         }}>
-          <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-            what each outcome pays on this bet
+          <div style={{
+            display: "flex", justifyContent: "space-between", alignItems: "baseline",
+            fontSize: 10, opacity: 0.75, marginBottom: 8,
+            letterSpacing: "0.16em", textTransform: "uppercase",
+          }}>
+            <span>outcome</span>
+            <span>odds</span>
+            <span>you&rsquo;d get</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "4px 12px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "5px 12px" }}>
             {[
-              { label: "bust",  pct: "8%",   mult: 0,    color: "#ff7474" },
+              { label: "BUST",  pct: "8%",   mult: 0,    color: "#ff7474" },
               { label: "0.7×",  pct: "15%",  mult: 700,  color: "#ff9b5a" },
               { label: "0.9×",  pct: "30%",  mult: 900,  color: "#ffb464" },
               { label: "1.05×", pct: "30%",  mult: 1050, color: "#cfe7ff" },
               { label: "1.2×",  pct: "14%",  mult: 1200, color: "#cfd8dc" },
               { label: "1.8×",  pct: "2.5%", mult: 1800, color: "#ffd76a" },
-              { label: "5×",    pct: "0.5%", mult: 5000, color: "#7fe3ff" },
+              { label: "5× JACKPOT", pct: "0.5%", mult: 5000, color: "#7fe3ff" },
             ].map(row => {
               const payout = (effectiveBetWei * BigInt(row.mult)) / 1000n;
               return (
                 <div key={row.label} style={{ display: "contents" }}>
-                  <span style={{ color: row.color }}>{row.label}</span>
+                  <span style={{ color: row.color, fontWeight: 700 }}>{row.label}</span>
                   <span style={{ textAlign: "center", color: "#7b94b8" }}>{row.pct}</span>
                   <span style={{ textAlign: "right" }}>{Number(formatEther(payout)).toFixed(5)}</span>
                 </div>
@@ -243,16 +269,38 @@ export function ChestsGame() {
         </div>
       )}
 
-      <button
-        onClick={() => setTurbo(t => !t)}
-        style={{
-          ...btnStyle(turbo ? "#ffd76a" : "rgba(127,227,255,0.18)"),
-          color: turbo ? "#021830" : "#cfe7ff",
-          minWidth: 0, padding: "8px 16px", fontSize: 12, letterSpacing: "0.08em",
-        }}
-      >
-        TURBO {turbo ? "ON" : "OFF"}
-      </button>
+      {/* 3-tier speed pill — normal / turbo / super turbo */}
+      <div style={{
+        display: "flex", gap: 0, padding: 3,
+        background: "rgba(0,0,0,0.35)",
+        border: "1px solid rgba(127,227,255,0.18)",
+        borderRadius: 999,
+      }}>
+        {(["off", "on", "super"] as const).map(level => {
+          const active = turbo === level;
+          const tint = level === "super" ? "#ff7aa8" : level === "on" ? "#ffd76a" : "#7fe3ff";
+          return (
+            <button
+              key={level}
+              onClick={() => setTurbo(level)}
+              style={{
+                padding: "7px 16px",
+                border: "none",
+                borderRadius: 999,
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: "0.14em",
+                cursor: "pointer",
+                background: active ? tint : "transparent",
+                color: active ? "#021830" : "#7b94b8",
+                transition: "background 120ms ease-out, color 120ms ease-out",
+              }}
+            >
+              {level === "off" ? "NORMAL" : level === "on" ? "TURBO" : "SUPER"}
+            </button>
+          );
+        })}
+      </div>
 
       {round.status === "resolved" && (
         <div style={{

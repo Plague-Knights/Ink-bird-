@@ -23,16 +23,21 @@ type TrailDot = { x: number; y: number; r: number; life: number };
 type Bubble = { x: number; y: number; r: number; tw: number; vy: number };
 type Weed = { layer: 0 | 1; x: number; w: number; h: number };
 
+// Three-tier speed. "off" runs the sim at 60hz real time; "on" runs
+// 3 sim ticks per real tick (~3x); "super" runs 7 sim ticks per real
+// tick (~7x) for players who just want outcomes fast.
+export type TurboLevel = "off" | "on" | "super";
+
 type Props = {
   seed?: number; // optional fixed seed for reproducible runs
-  turbo?: boolean;
+  turbo?: TurboLevel;
   // When true, draws a "DEMO" badge over the canvas so players know
   // what they're watching isn't their own round yet. The parent flips
   // this off while a real on-chain round is in flight.
   demo?: boolean;
 };
 
-export function AutoFlapper({ seed: fixedSeed, turbo = false, demo = false }: Props) {
+export function AutoFlapper({ seed: fixedSeed, turbo = "off", demo = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef  = useRef<SimState | null>(null);
   const planRef   = useRef<AutoPlan | null>(null);
@@ -107,10 +112,12 @@ export function AutoFlapper({ seed: fixedSeed, turbo = false, demo = false }: Pr
       last = now;
       acc += dt;
 
-      // Turbo runs the simulation 3 ticks per real tick — same logic,
-      // just visually faster. Doesn't affect correctness or seed
-      // determinism (the input plan is pre-computed).
-      const stepsPerTick = turboRef.current ? 3 : 1;
+      // Turbo runs the simulation multiple ticks per real tick. Same
+      // logic either way — doesn't affect correctness or seed
+      // determinism since the plan is pre-computed. "super" pushes
+      // through a round in a second or two.
+      const tLevel = turboRef.current;
+      const stepsPerTick = tLevel === "super" ? 7 : tLevel === "on" ? 3 : 1;
 
       while (acc >= STEP_MS) {
         acc -= STEP_MS;
