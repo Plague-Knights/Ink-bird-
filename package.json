@@ -37,6 +37,7 @@
     "dotenv": "^17.4.2",
     "prisma": "^7.0.0",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.0"
   }
 }
