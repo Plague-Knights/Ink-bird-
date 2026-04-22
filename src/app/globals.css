@@ -792,3 +792,14 @@ body.modal-open { position: fixed; width: 100%; overflow: hidden; }
   from { transform: translateX(20px); opacity: 0; }
   to   { transform: translateX(0);    opacity: 1; }
 }
+
+
+/* Chest reveal overlay + final card animations. */
+@keyframes chest-reveal-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes chest-final-in {
+  from { transform: translateY(24px) scale(0.92); opacity: 0; }
+  to   { transform: translateY(0) scale(1);       opacity: 1; }
+}

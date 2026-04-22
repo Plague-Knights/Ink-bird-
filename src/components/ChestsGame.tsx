@@ -7,6 +7,7 @@ import { formatEther, parseEther } from "viem";
 import { CHESTS_ABI, chestsAddressForChain, explorerForChain } from "@/lib/chestsContract";
 import { inkSepolia, soneiumMinato } from "@/config/chains";
 import { AutoFlapper, type TurboLevel } from "@/components/AutoFlapper";
+import { ChestReveal } from "@/components/ChestReveal";
 
 const SUPPORTED_CHAINS = [inkSepolia, soneiumMinato] as const;
 
@@ -236,6 +237,11 @@ type UIProps = {
 
 function ChestsGameUI(p: UIProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  // Chest reveal state: we wait until BOTH the round has resolved AND
+  // the AutoFlapper bird has died (so the player's dopamine build-up
+  // peaks at the end of the run, not mid-flight).
+  const [runChests, setRunChests] = useState<number | null>(null);
+  const [revealDismissed, setRevealDismissed] = useState(false);
   const {
     round, demoMode, setDemoMode, resetForNextPlay,
     visualSeed, turbo, setTurbo,
@@ -244,6 +250,16 @@ function ChestsGameUI(p: UIProps) {
     isConnected, unsupportedChain, chainId, switchChain, switching,
     buttonLabel, buttonDisabled, onButtonClick,
   } = p;
+
+  // Reset reveal state whenever a new round starts (or we exit resolved).
+  useEffect(() => {
+    if (round.status !== "resolved") {
+      setRunChests(null);
+      setRevealDismissed(false);
+    }
+  }, [round.status, visualSeed]);
+
+  const showReveal = round.status === "resolved" && runChests !== null && !revealDismissed;
 
   // Close drawer on Escape for keyboard users.
   useEffect(() => {
@@ -339,12 +355,39 @@ function ChestsGameUI(p: UIProps) {
               seed={visualSeed || undefined}
               turbo={turbo}
               demo={round.status === "idle" || round.status === "error"}
+              holdOnDeath={
+                (round.status === "awaiting_play"
+                  || round.status === "revealing"
+                  || round.status === "resolved")
+                && !revealDismissed
+              }
+              onRunEnd={n => { setRunChests(n); }}
             />
           </div>
         </div>
 
-        {/* Result card — overlay top-center on resolve */}
-        {round.status === "resolved" && (
+        {/* Chest reveal overlay — fires when the run has ended AND the
+            round has resolved. Holds the bird dead, opens the collected
+            chests one by one, and only then shows the final payout. */}
+        {showReveal && round.status === "resolved" && (
+          <ChestReveal
+            multiplierThousandths={round.multiplierThousandths}
+            betWei={round.betWei}
+            payoutWei={round.payoutWei}
+            chestsCollected={runChests ?? 0}
+            txReveal={round.txReveal}
+            explorerBase={explorerForChain(chainId)}
+            onContinue={() => {
+              setRevealDismissed(true);
+              resetForNextPlay();
+            }}
+          />
+        )}
+
+        {/* Result card — overlay top-center on resolve (fallback only
+            shown if the reveal has been dismissed and another round
+            hasn't started yet). */}
+        {round.status === "resolved" && revealDismissed && (
           <div className="cannon-result-reveal" style={{
             position: "absolute", left: "50%", top: 12,
             padding: "10px 18px",

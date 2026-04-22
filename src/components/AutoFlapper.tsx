@@ -35,9 +35,23 @@ type Props = {
   // what they're watching isn't their own round yet. The parent flips
   // this off while a real on-chain round is in flight.
   demo?: boolean;
+  // When true, the run stops permanently on bird death instead of
+  // auto-restarting. Parent uses this to freeze the scene while the
+  // chest-reveal overlay plays out.
+  holdOnDeath?: boolean;
+  // Called once per run when the bird dies, with the chests-only
+  // collection count (droplets excluded). Parent uses this to size
+  // the reveal sequence.
+  onRunEnd?: (chestsCollected: number) => void;
 };
 
-export function AutoFlapper({ seed: fixedSeed, turbo = "off", demo = false }: Props) {
+export function AutoFlapper({
+  seed: fixedSeed,
+  turbo = "off",
+  demo = false,
+  holdOnDeath = false,
+  onRunEnd,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef  = useRef<SimState | null>(null);
   const planRef   = useRef<AutoPlan | null>(null);
@@ -62,6 +76,13 @@ export function AutoFlapper({ seed: fixedSeed, turbo = "off", demo = false }: Pr
   useEffect(() => { turboRef.current = turbo; }, [turbo]);
   const demoRef = useRef(demo);
   useEffect(() => { demoRef.current = demo; }, [demo]);
+  const holdOnDeathRef = useRef(holdOnDeath);
+  useEffect(() => { holdOnDeathRef.current = holdOnDeath; }, [holdOnDeath]);
+  const onRunEndRef = useRef(onRunEnd);
+  useEffect(() => { onRunEndRef.current = onRunEnd; }, [onRunEnd]);
+  // Chest-only collection counter — resets each new run.
+  const chestsCollectedRef = useRef(0);
+  const runEndFiredRef = useRef(false);
 
   function initParallax() {
     const bubbles: Bubble[] = [];
@@ -93,6 +114,8 @@ export function AutoFlapper({ seed: fixedSeed, turbo = "off", demo = false }: Pr
     particlesRef.current = [];
     trailRef.current = [];
     collectedSetRef.current = new WeakSet();
+    chestsCollectedRef.current = 0;
+    runEndFiredRef.current = false;
   }
 
   useEffect(() => {
@@ -148,6 +171,7 @@ export function AutoFlapper({ seed: fixedSeed, turbo = "off", demo = false }: Pr
             if (d.collected && !beforeCollected.has(d) && !collectedSetRef.current.has(d)) {
               collectedSetRef.current.add(d);
               const c = collectibleForPos(d.x, d.y);
+              if (c.kind === "chest") chestsCollectedRef.current += 1;
               const color = c.kind === "drop"
                 ? "rgba(180,140,255,1)"
                 : c.tier === 3 ? "rgba(127,227,255,1)"
@@ -188,12 +212,21 @@ export function AutoFlapper({ seed: fixedSeed, turbo = "off", demo = false }: Pr
               droplets: plan.dropletsCollected,
               run: statsRef.current.run,
             };
+            // Fire the run-ended callback exactly once per run.
+            if (!runEndFiredRef.current) {
+              runEndFiredRef.current = true;
+              onRunEndRef.current?.(chestsCollectedRef.current);
+            }
           }
         } else {
           step(s, plan.inputs);
           const targetRot = Math.max(-0.7, Math.min(1.2, s.bird.vy * 0.08));
           birdRotRef.current += (targetRot - birdRotRef.current) * 0.18;
-          if (deadSinceRef.current && now - deadSinceRef.current > POST_DEATH_MS) {
+          // holdOnDeath freezes the scene on the death frame until the
+          // parent resets the seed (which kicks off a fresh run).
+          if (!holdOnDeathRef.current
+              && deadSinceRef.current
+              && now - deadSinceRef.current > POST_DEATH_MS) {
             startNewRun();
             statsRef.current = { pipesPassed: 0, droplets: 0, run: statsRef.current.run + 1 };
           }
