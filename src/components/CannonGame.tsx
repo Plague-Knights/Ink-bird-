@@ -669,7 +669,11 @@ function render(
   let squidWorldX: number | null = null;
   let squidWorldY: number | null = null;
   if (round.status === "resolved" && resolvedAtFrame != null) {
-    const animProgress = Math.min(1, (frame - resolvedAtFrame) / FLIGHT_FRAMES);
+    const lt = Math.min(1, (frame - resolvedAtFrame) / FLIGHT_FRAMES);
+    // Match the custom ease used below so camera and squid stay synced.
+    const animProgress = lt < 0.8
+      ? lt
+      : 0.8 + 0.2 * (1 - Math.pow(1 - (lt - 0.8) / 0.2, 2.2));
     const meters = distanceBpToMeters(round.distanceBp);
     const bust = round.distanceBp === 0;
     const landFrac = bust ? 0.08 : fracFromMeters(meters);
@@ -782,6 +786,54 @@ function render(
   const stripW = STRIP_END - STRIP_START;
   const sandLevel = H2 - GROUND_H + 4;
 
+  // Multiplier zone bands on the sand — these visualize the payout
+  // curve (1×, 2×, 3×, 4×, 5×) so the player can see what each landing
+  // spot is worth. Colored stripes get hotter as multiplier rises.
+  // During flight we highlight the zone the squid is CURRENTLY over so
+  // you can feel the tension build as it drifts between bands.
+  const MULTI_ZONES = [
+    { mult: 1, color: "#6b8aa8" },
+    { mult: 2, color: "#7fe3ff" },
+    { mult: 3, color: "#7bff9b" },
+    { mult: 4, color: "#ffd76a" },
+    { mult: 5, color: "#ff9b5a" },
+  ];
+  for (let i = 0; i < MULTI_ZONES.length; i++) {
+    const z = MULTI_ZONES[i]!;
+    const prev = i === 0 ? 0 : MULTI_ZONES[i - 1]!.mult;
+    // Zone covers the strip between prev×100m and this×100m.
+    const fracFrom = fracFromMeters(prev * 100);
+    const fracTo = fracFromMeters(z.mult * 100);
+    const zoneX = stripStart + stripW * fracFrom;
+    const zoneW = stripW * (fracTo - fracFrom);
+    const intensity = 0.15 + (i / MULTI_ZONES.length) * 0.25;
+    // Is the squid currently over this zone? If so, pulse the intensity.
+    const overZone = squidWorldX != null && squidWorldY != null
+      && squidWorldX >= zoneX && squidWorldX < zoneX + zoneW;
+    const pulse = overZone ? 0.4 + Math.sin(frame * 0.2) * 0.15 : 0;
+    // Colored horizontal stripe just below the sand line.
+    ctx.fillStyle = `${z.color}${Math.round((intensity + pulse) * 255).toString(16).padStart(2, "0")}`;
+    ctx.fillRect(zoneX, sandLevel - 1, zoneW, 5);
+    // Marker post at the start of each zone (not the first).
+    if (i > 0) {
+      ctx.fillStyle = "rgba(40,25,8,0.8)";
+      ctx.fillRect(zoneX - 2, sandLevel - 28, 4, 28);
+      ctx.fillStyle = z.color;
+      ctx.beginPath();
+      ctx.moveTo(zoneX, sandLevel - 36);
+      ctx.lineTo(zoneX + 22, sandLevel - 32);
+      ctx.lineTo(zoneX + 22, sandLevel - 22);
+      ctx.lineTo(zoneX, sandLevel - 26);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#06131e";
+      ctx.font = 'bold 12px "Rubik", sans-serif';
+      ctx.textAlign = "center";
+      ctx.fillText(`${z.mult}×`, zoneX + 11, sandLevel - 26);
+      ctx.textAlign = "start";
+    }
+  }
+
   for (const reef of reefs) drawReef(ctx, stripStart + stripW * reef.x, sandLevel, reef, frame);
   for (const r of rocks)    drawRock(ctx, stripStart + stripW * r.x, sandLevel, r.w, r.h, r.x);
   for (const c of creatures) {
@@ -846,8 +898,15 @@ function render(
   if (round.status === "resolved" && resolvedAtFrame != null) {
     // Flight: the squid flies along a bezier over FLIGHT_FRAMES, then
     // spends TUMBLE_FRAMES bouncing on the sand before coming to rest.
+    // The last 20% of the flight is eased so the landing approach plays
+    // in visible slow-motion — builds tension and lets the near-miss
+    // read on payout zones.
     const sinceResolve = frame - resolvedAtFrame;
-    const animProgress = Math.min(1, sinceResolve / FLIGHT_FRAMES);
+    const linearT = Math.min(1, sinceResolve / FLIGHT_FRAMES);
+    // Custom ease: linear until 0.8, then quadratic stretch for last 20%.
+    const animProgress = linearT < 0.8
+      ? linearT
+      : 0.8 + (1 - 0.8) * (1 - Math.pow(1 - (linearT - 0.8) / 0.2, 2.2));
     const tumbleT = Math.max(0, Math.min(1, (sinceResolve - FLIGHT_FRAMES) / TUMBLE_FRAMES));
     const distanceBp = round.distanceBp;
     const meters = distanceBpToMeters(distanceBp);
@@ -909,7 +968,8 @@ function render(
     if (tumbleT > 0) {
       // Dampened hop sequence along the ground with a little forward
       // skid. Three bounces, each smaller than the last.
-      const hops = Math.abs(Math.sin(tumbleT * Math.PI * 3.2));
+      const hopPhase = tumbleT * Math.PI * 3.2;
+      const hops = Math.abs(Math.sin(hopPhase));
       const decay = Math.pow(1 - tumbleT, 1.8);
       const hopH = hops * decay * 68;
       const skidX = (1 - decay) * 40;
@@ -918,6 +978,24 @@ function render(
       drawRot = tumbleT * Math.PI * 1.4; // squid tumbles as it rolls
       squidKick.ox = squidKick.oy = 0;
       squidKick.vx = squidKick.vy = 0;
+      // Dust puff on each ground contact (sin phase crossing zero).
+      // Draw at the squid's current x, fading in+out over a few frames.
+      const contactPhase = hopPhase % Math.PI;
+      if (contactPhase < 0.35 || contactPhase > Math.PI - 0.35) {
+        const contactStrength = Math.max(0, 1 - Math.min(contactPhase, Math.PI - contactPhase) / 0.35) * decay;
+        if (contactStrength > 0.05) {
+          ctx.save();
+          ctx.fillStyle = `rgba(220, 200, 150, ${0.35 * contactStrength})`;
+          for (let p = 0; p < 5; p++) {
+            const ang = Math.PI + (p - 2) * 0.4;
+            const dist = 10 + p * 3;
+            ctx.beginPath();
+            ctx.arc(bx + Math.cos(ang) * dist, landY - 2 + Math.sin(ang) * 2, 6 + contactStrength * 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+      }
     }
 
     // Motion trail — only during flight, not during tumble.
@@ -931,6 +1009,34 @@ function render(
         ctx.arc(tx, ty, 6 - i * 0.6, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+
+    // Muzzle flash — bright burst during the first few frames of flight
+    // so the cannon firing reads as a real BOOM.
+    if (sinceResolve < 10) {
+      const flashT = sinceResolve / 10;
+      const flashA = 1 - flashT;
+      const flashR = 24 + flashT * 40;
+      ctx.save();
+      const flash = ctx.createRadialGradient(muzzleX, muzzleY, 2, muzzleX, muzzleY, flashR);
+      flash.addColorStop(0, `rgba(255, 240, 190, ${flashA})`);
+      flash.addColorStop(0.4, `rgba(255, 180, 80, ${flashA * 0.7})`);
+      flash.addColorStop(1, "rgba(255, 120, 40, 0)");
+      ctx.fillStyle = flash;
+      ctx.beginPath();
+      ctx.arc(muzzleX, muzzleY, flashR, 0, Math.PI * 2);
+      ctx.fill();
+      // Spokes
+      ctx.strokeStyle = `rgba(255, 235, 160, ${flashA})`;
+      ctx.lineWidth = 3;
+      for (let s = 0; s < 6; s++) {
+        const a = (s / 6) * Math.PI * 2 + flashT;
+        ctx.beginPath();
+        ctx.moveTo(muzzleX + Math.cos(a) * 8, muzzleY + Math.sin(a) * 8);
+        ctx.lineTo(muzzleX + Math.cos(a) * (28 + flashT * 20), muzzleY + Math.sin(a) * (28 + flashT * 20));
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     const bird: Bird = { x: bx, y: by, vy: 0, r: 18 };
@@ -1011,6 +1117,30 @@ function render(
     // Landing reveal — waits until after the squid has finished
     // tumbling so the result doesn't pop in while it's still bouncing.
     if (tumbleT >= 1) {
+      // Near-miss: if the squid landed within 20m of the next zone's
+      // boundary (i.e. just short of a higher multiplier), show a
+      // "SO CLOSE!" nudge. Builds the gambler's "I was right there"
+      // feeling without changing payout math.
+      if (!bust) {
+        const landedM = meters;
+        const nextBoundaryM = (Math.floor(landedM / 100) + 1) * 100;
+        const gap = nextBoundaryM - landedM;
+        if (gap > 0 && gap <= 20 && nextBoundaryM <= 500) {
+          const nearPulse = 0.8 + Math.sin(frame * 0.25) * 0.2;
+          ctx.save();
+          ctx.fillStyle = `rgba(20, 10, 0, ${0.85 * nearPulse})`;
+          roundRect(ctx, landX - 68, landY - 104, 136, 26, 8); ctx.fill();
+          ctx.strokeStyle = `rgba(255, 200, 90, ${nearPulse})`;
+          ctx.lineWidth = 2;
+          roundRect(ctx, landX - 68, landY - 104, 136, 26, 8); ctx.stroke();
+          ctx.fillStyle = `rgba(255, 220, 120, ${nearPulse})`;
+          ctx.font = 'bold 13px "Rubik", sans-serif';
+          ctx.textAlign = "center";
+          ctx.fillText(`SO CLOSE · ${gap}m off ${nextBoundaryM / 100}×`, landX, landY - 86);
+          ctx.textAlign = "start";
+          ctx.restore();
+        }
+      }
       if (bust) {
         // Red splat
         const splatR = 30 + Math.sin(frame * 0.3) * 3;
