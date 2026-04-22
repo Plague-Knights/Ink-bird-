@@ -59,9 +59,13 @@ function fracFromMeters(m: number): number {
 const MIN_ANGLE = 20;
 const MAX_ANGLE = 75;
 const DEFAULT_ANGLE = 45;
-// Squid flight animation length, in rAF frames (~60fps). Shorter =
-// snappier squid launch after the on-chain roll lands.
-const FLIGHT_FRAMES = 70;
+// Squid flight animation length, in rAF frames (~60fps). Long enough
+// that the arc has room to read; too short and the squid is a blur.
+const FLIGHT_FRAMES = 110;
+// Zoom: how many world units tall the canvas shows. Smaller = tighter
+// zoom. WORLD_H is 1200, so 850 gives roughly a 40% zoom-in over the
+// fit-everything view.
+const VISIBLE_WORLD_H = 850;
 
 type Bubble = { x: number; y: number; r: number; tw: number; vy: number; wiggle: number };
 type Weed = { x: number; w: number; h: number; layer: 0 | 1 };
@@ -88,6 +92,22 @@ export function CannonGame() {
   // follow this value, and the arc's curve can pass through mid-air
   // fish based on how steep/shallow the angle is.
   const [angle, setAngle] = useState<number>(DEFAULT_ANGLE);
+  // Result toast visibility — kept off during the flight animation so
+  // the payout doesn't reveal before the squid has actually landed.
+  const [showResult, setShowResult] = useState(false);
+
+  useEffect(() => {
+    if (round.status !== "resolved") {
+      setShowResult(false);
+      return;
+    }
+    // Show the toast just after the flight animation lands. FLIGHT_FRAMES
+    // is ~60fps rAF frames, so convert to ms with a small buffer so the
+    // landing glow/multi chip have read before the toast appears.
+    const ms = (FLIGHT_FRAMES * 1000) / 60 + 200;
+    const id = setTimeout(() => setShowResult(true), ms);
+    return () => clearTimeout(id);
+  }, [round.status, seedHash]);
 
   const readAddress = CANNON_ADDR ?? undefined;
   const enabledRead = !!readAddress;
@@ -188,7 +208,7 @@ export function CannonGame() {
       case "opening":       return "Opening round…";
       case "awaiting_play": return "Awaiting fire tx…";
       case "revealing":     return "Resolving on-chain…";
-      case "resolved":      return "Fire again";
+      case "resolved":      return showResult ? "Fire again" : "Landing…";
       case "error":         return "Try again";
       default:              return `FIRE (${Number(effectiveBetEth).toFixed(4)} ETH)`;
     }
@@ -196,6 +216,7 @@ export function CannonGame() {
 
   const buttonDisabled = !isConnected || unsupportedChain || writing || confirming
     || round.status === "opening" || round.status === "awaiting_play" || round.status === "revealing"
+    || (round.status === "resolved" && !showResult)
     || effectiveBetWei == null;
 
   const onButtonClick = round.status === "resolved" || round.status === "error"
@@ -220,7 +241,7 @@ export function CannonGame() {
           angle={angle}
         />
 
-        {round.status === "resolved" && (() => {
+        {round.status === "resolved" && showResult && (() => {
           const mult = distanceBpToMultiplier(round.distanceBp);
           const meters = distanceBpToMeters(round.distanceBp);
           const won = BigInt(round.payoutWei) > BigInt(round.betWei);
@@ -454,8 +475,8 @@ function CannonCanvas({
       vx: number; vy: number;    // velocity in world units/frame
       rot: number; vrot: number;
     }>();
-    // Smoothed camera — lerps toward a target each frame.
-    const cameraRef = { x: 0 };
+    // Smoothed camera — lerps toward a target each frame on both axes.
+    const cameraRef = { x: 0, y: Math.max(0, WORLD_H - VISIBLE_WORLD_H) };
 
     resolvedAtFrameRef.current = null;
 
@@ -614,39 +635,59 @@ function render(
   resolvedAtFrame: number | null,
   _bet: bigint | null,
   angleDeg: number,
-  cameraRef: { x: number },
+  cameraRef: { x: number; y: number },
 ) {
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
 
-  // World-height fills the canvas; pick a uniform scale so aspect is
-  // preserved. The visible world width then falls out of canvas width.
-  const scale = ch / WORLD_H;
+  // Zoom — canvas shows VISIBLE_WORLD_H world units vertically (less
+  // than WORLD_H, so it's cropped and zoomed in). The camera pans in
+  // both axes to keep the squid framed.
+  const scale = ch / VISIBLE_WORLD_H;
   const viewWorldW = cw / scale;
+  const viewWorldH = VISIBLE_WORLD_H;
   const W2 = WORLD_W, H2 = WORLD_H;
 
-  // Target camera x — show cannon on idle; follow squid during flight
-  // with a slight lead so we can see what's ahead. Clamped to world.
-  let targetCamX = 0;
+  // Compute the squid's current world position (during flight), so
+  // the camera can follow it in both axes. Mirrors the bezier that
+  // draws the squid below.
+  let squidWorldX: number | null = null;
+  let squidWorldY: number | null = null;
   if (round.status === "resolved" && resolvedAtFrame != null) {
     const animProgress = Math.min(1, (frame - resolvedAtFrame) / FLIGHT_FRAMES);
     const meters = distanceBpToMeters(round.distanceBp);
     const bust = round.distanceBp === 0;
     const landFrac = bust ? 0.08 : fracFromMeters(meters);
     const landX = STRIP_START + (STRIP_END - STRIP_START) * landFrac;
-    // Start at cannon, drift toward landing through the animation.
-    const camStart = 0;
-    const camEnd = Math.max(0, Math.min(W2 - viewWorldW, landX - viewWorldW * 0.35));
-    targetCamX = camStart + (camEnd - camStart) * easeInOut(animProgress);
+    const landY = (H2 - GROUND_H + 4) - 4;
+    const barrelRad_ = -(angleDeg * Math.PI) / 180;
+    const mX_ = 92 + Math.cos(barrelRad_) * 72;
+    const mY_ = (H2 - GROUND_H) - 20 + Math.sin(barrelRad_) * 72;
+    const midX_ = (mX_ + landX) / 2;
+    const angleT_ = (angleDeg - MIN_ANGLE) / (MAX_ANGLE - MIN_ANGLE);
+    const apex_ = Math.min(mY_, landY) - (160 + angleT_ * 660);
+    const t = animProgress;
+    squidWorldX = (1 - t) * (1 - t) * mX_ + 2 * (1 - t) * t * midX_ + t * t * landX;
+    squidWorldY = (1 - t) * (1 - t) * mY_ + 2 * (1 - t) * t * apex_ + t * t * landY;
   }
-  // Smooth toward target — lerp factor 0.12 keeps it snappy but not jittery.
-  cameraRef.x += (targetCamX - cameraRef.x) * 0.12;
+
+  // Camera targets — cannon at idle, squid during flight.
+  const idleCamY = Math.max(0, H2 - viewWorldH); // show ground + cannon
+  let targetCamX = 0;
+  let targetCamY = idleCamY;
+  if (squidWorldX != null && squidWorldY != null) {
+    targetCamX = Math.max(0, Math.min(W2 - viewWorldW, squidWorldX - viewWorldW * 0.4));
+    targetCamY = Math.max(0, Math.min(H2 - viewWorldH, squidWorldY - viewWorldH * 0.45));
+  }
+  cameraRef.x += (targetCamX - cameraRef.x) * 0.14;
+  cameraRef.y += (targetCamY - cameraRef.y) * 0.16;
   const camX = cameraRef.x;
+  const camY = cameraRef.y;
 
   // Apply world→screen transform. Everything below draws in world coords.
-  ctx.setTransform(scale, 0, 0, scale, -camX * scale, 0);
+  ctx.setTransform(scale, 0, 0, scale, -camX * scale, -camY * scale);
 
   // Ocean gradient
   const sky = ctx.createLinearGradient(0, 0, 0, H2 - GROUND_H);
