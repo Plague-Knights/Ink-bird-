@@ -469,6 +469,9 @@ function CannonCanvas({
     const reefs = generateReefs(layoutSeed * 7919);
     const creatures = generateCreatures(layoutSeed * 31337);
     const midAirFish = generateMidAirFish(layoutSeed * 11117);
+    const farHills = generateFarHills(layoutSeed * 51713);
+    const kelpShadows = generateKelpShadows(layoutSeed * 97561);
+    const schools = generateSchools(layoutSeed * 44497);
     // Hit fish carry their knockback state (pos delta, velocity,
     // rotation) so we can animate them flying off while the squid
     // continues on its contract-determined arc.
@@ -524,6 +527,7 @@ function CannonCanvas({
         frame, r, resolvedAtFrameRef.current, betRef.current,
         r.status === "resolved" ? lockedAngleRef.current : angleRef.current,
         cameraRef, squidKick, inkTrail, combo,
+        farHills, kelpShadows, schools,
       );
       raf = requestAnimationFrame(tick);
     };
@@ -616,6 +620,56 @@ function generateCreatures(seed: number): Creature[] {
   return creatures.sort((a, b) => a.x - b.x);
 }
 
+// Background silhouette hills for the far parallax layer — low,
+// overlapping rock-shape silhouettes that give the scene depth.
+function generateFarHills(seed: number): { x: number; w: number; h: number; color: string }[] {
+  const rand = mulberry32(seed);
+  const hills: { x: number; w: number; h: number; color: string }[] = [];
+  const count = 18;
+  for (let i = 0; i < count; i++) {
+    hills.push({
+      x: i * 260 + rand() * 80,
+      w: 320 + rand() * 220,
+      h: 90 + rand() * 140,
+      color: rand() < 0.5 ? "rgba(10, 34, 58, 0.7)" : "rgba(14, 42, 70, 0.6)",
+    });
+  }
+  return hills;
+}
+
+// Mid-depth kelp silhouettes — sway gently, slightly darker than sky.
+function generateKelpShadows(seed: number): { x: number; h: number; phase: number }[] {
+  const rand = mulberry32(seed);
+  const kelp: { x: number; h: number; phase: number }[] = [];
+  for (let i = 0; i < 44; i++) {
+    kelp.push({
+      x: i * 110 + rand() * 40,
+      h: 180 + rand() * 240,
+      phase: rand() * Math.PI * 2,
+    });
+  }
+  return kelp;
+}
+
+// Distant schools of tiny fish — silhouettes only, drifting slowly
+// across the mid parallax layer.
+type School = { cx: number; cy: number; vx: number; size: number; count: number; phase: number };
+function generateSchools(seed: number): School[] {
+  const rand = mulberry32(seed);
+  const schools: School[] = [];
+  for (let i = 0; i < 6; i++) {
+    schools.push({
+      cx: rand() * WORLD_W,
+      cy: 150 + rand() * (WORLD_H - GROUND_H - 300),
+      vx: 0.15 + rand() * 0.25,
+      size: 1.4 + rand() * 1.4,
+      count: 12 + Math.floor(rand() * 10),
+      phase: rand() * Math.PI * 2,
+    });
+  }
+  return schools;
+}
+
 function generateMidAirFish(seed: number): MidAirFish[] {
   const rand = mulberry32(seed);
   const fish: MidAirFish[] = [];
@@ -664,6 +718,9 @@ function render(
   squidKick: { vx: number; vy: number; ox: number; oy: number },
   inkTrail: { x: number; y: number; r: number; born: number }[],
   combo: { count: number; lastHitFrame: number; peakFrame: number },
+  farHills: { x: number; w: number; h: number; color: string }[],
+  kelpShadows: { x: number; h: number; phase: number }[],
+  schools: School[],
 ) {
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
@@ -730,29 +787,109 @@ function render(
   // Apply world→screen transform. Everything below draws in world coords.
   ctx.setTransform(scale, 0, 0, scale, -camX * scale + shakeX, -camY * scale + shakeY);
 
-  // Ocean gradient
-  const sky = ctx.createLinearGradient(0, 0, 0, H2 - GROUND_H);
+  // Ocean gradient — drawn in screen space so it fills the viewport
+  // regardless of camera (sky doesn't parallax; color comes from camera
+  // depth though).
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const sky = ctx.createLinearGradient(0, 0, 0, ch);
   sky.addColorStop(0, "#7ad3e0");
-  sky.addColorStop(0.25, "#2a9ac2");
-  sky.addColorStop(0.6, "#0e4a7c");
+  sky.addColorStop(0.22, "#2a9ac2");
+  sky.addColorStop(0.55, "#0e4a7c");
   sky.addColorStop(1, "#041a3a");
   ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W2, H2 - GROUND_H);
+  ctx.fillRect(0, 0, cw, ch);
 
-  const shimmer = ctx.createLinearGradient(0, 0, 0, 40);
-  shimmer.addColorStop(0, "rgba(255,255,255,0.35)");
-  shimmer.addColorStop(1, "rgba(255,255,255,0)");
-  ctx.fillStyle = shimmer;
-  ctx.fillRect(0, 0, W2, 40);
+  // Helper — apply a parallax transform for a given scroll factor.
+  // factor = 1 is the main world, 0 = locked to camera.
+  const applyParallax = (factor: number) => {
+    ctx.setTransform(scale, 0, 0, scale, -camX * scale * factor + shakeX, -camY * scale + shakeY);
+  };
 
+  // Far silhouette hills at 0.35× parallax — the background line of
+  // distant rocks that gives the scene depth.
+  applyParallax(0.35);
+  for (const hill of farHills) {
+    const baseY = H2 - GROUND_H + 8;
+    ctx.fillStyle = hill.color;
+    ctx.beginPath();
+    ctx.moveTo(hill.x, baseY);
+    ctx.quadraticCurveTo(hill.x + hill.w / 2, baseY - hill.h, hill.x + hill.w, baseY);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Mid kelp silhouettes at 0.6× parallax — swaying darker shapes.
+  applyParallax(0.6);
+  for (const k of kelpShadows) {
+    const baseY = H2 - GROUND_H;
+    const sway = Math.sin(frame * 0.02 + k.phase) * 8;
+    ctx.strokeStyle = "rgba(6, 22, 36, 0.55)";
+    ctx.lineWidth = 7;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(k.x, baseY);
+    for (let s = 1; s <= 6; s++) {
+      const t = s / 6;
+      const wy = baseY - t * k.h;
+      const wx = k.x + Math.sin(frame * 0.015 + k.phase + t * 2) * sway * t;
+      ctx.lineTo(wx, wy);
+    }
+    ctx.stroke();
+  }
+
+  // Distant schools of tiny fish at 0.5× parallax — silhouette dots
+  // in a drifting cluster, animated independently per school.
+  applyParallax(0.5);
+  for (const s of schools) {
+    const t = frame * s.vx + s.phase;
+    const cx = ((s.cx + t * 14) % (WORLD_W + 200)) - 100;
+    const cy = s.cy + Math.sin(frame * 0.01 + s.phase) * 18;
+    ctx.fillStyle = "rgba(10, 34, 58, 0.55)";
+    for (let i = 0; i < s.count; i++) {
+      const ang = (i / s.count) * Math.PI * 2 + t * 0.1;
+      const r = 22 + (i % 3) * 10;
+      const fx = cx + Math.cos(ang) * r + Math.sin(t + i) * 4;
+      const fy = cy + Math.sin(ang) * (r * 0.5) + Math.cos(t * 0.7 + i) * 3;
+      ctx.beginPath();
+      ctx.ellipse(fx, fy, s.size * 3, s.size * 1.2, Math.atan2(Math.sin(t + i), 1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Back to main-world transform for the rest.
+  applyParallax(1);
+
+  // Wavy water surface — top boundary of the ocean gets a sinusoidal
+  // ripple with a bright glow, replacing the old flat shimmer.
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
-  for (let i = 0; i < 14; i++) {
-    const baseX = ((i * 180 + frame * 0.4) % (W2 + 240)) - 120;
-    ctx.fillStyle = "rgba(200, 230, 255, 0.05)";
+  ctx.fillStyle = "rgba(255,255,255,0.5)";
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  for (let x = 0; x <= W2; x += 24) {
+    const waveY = 18 + Math.sin(x * 0.01 + frame * 0.06) * 5 + Math.sin(x * 0.031 + frame * 0.03) * 3;
+    ctx.lineTo(x, waveY);
+  }
+  ctx.lineTo(W2, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // God rays — gradient wedges pouring from the surface down into the
+  // water. Slightly more generous than the old flat stripes.
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (let i = 0; i < 18; i++) {
+    const baseX = ((i * 220 + frame * 0.45) % (W2 + 320)) - 160;
+    const topY = 10 + Math.sin(baseX * 0.02 + frame * 0.04) * 5;
+    const ray = ctx.createLinearGradient(0, topY, 0, H2 - GROUND_H);
+    ray.addColorStop(0, "rgba(200, 230, 255, 0.10)");
+    ray.addColorStop(0.4, "rgba(200, 230, 255, 0.05)");
+    ray.addColorStop(1, "rgba(200, 230, 255, 0)");
+    ctx.fillStyle = ray;
     ctx.beginPath();
-    ctx.moveTo(baseX, 0); ctx.lineTo(baseX + 50, 0);
-    ctx.lineTo(baseX + 260, H2 - GROUND_H); ctx.lineTo(baseX + 210, H2 - GROUND_H);
+    ctx.moveTo(baseX, topY); ctx.lineTo(baseX + 38, topY);
+    ctx.lineTo(baseX + 320, H2 - GROUND_H); ctx.lineTo(baseX + 260, H2 - GROUND_H);
     ctx.closePath(); ctx.fill();
   }
   ctx.restore();
@@ -805,6 +942,24 @@ function render(
   ctx.fillRect(0, H2 - GROUND_H, W2, GROUND_H);
   ctx.fillStyle = "rgba(40,25,8,0.4)";
   ctx.fillRect(0, H2 - GROUND_H, W2, 2);
+
+  // Animated caustics on the sand — two drifting sine grids layered
+  // with "lighter" compositing create moving bright patches that read
+  // as sunlight through water ripples.
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const causticY = H2 - GROUND_H + 2;
+  for (let x = 0; x < W2; x += 18) {
+    const a = 0.5 + 0.5 * Math.sin(x * 0.018 + frame * 0.04);
+    const b = 0.5 + 0.5 * Math.cos(x * 0.032 + frame * 0.025);
+    const intensity = Math.pow(a * b, 1.6) * 0.45;
+    if (intensity < 0.05) continue;
+    ctx.fillStyle = `rgba(255, 240, 190, ${intensity})`;
+    ctx.beginPath();
+    ctx.ellipse(x, causticY + 4, 14, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 
   const stripStart = STRIP_START;
   const stripW = STRIP_END - STRIP_START;
@@ -1068,6 +1223,22 @@ function render(
         ctx.lineTo(muzzleX + Math.cos(a) * (28 + flashT * 20), muzzleY + Math.sin(a) * (28 + flashT * 20));
         ctx.stroke();
       }
+      ctx.restore();
+    }
+
+    // Bloom halo behind the squid — soft bright ring, more intense
+    // during active flight, dims during tumble.
+    const haloPower = tumbleT === 0 ? 1 : 1 - tumbleT;
+    if (haloPower > 0.05) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      const halo = ctx.createRadialGradient(bx, by, 6, bx, by, 42);
+      halo.addColorStop(0, `rgba(170, 220, 255, ${0.55 * haloPower})`);
+      halo.addColorStop(1, "rgba(170, 220, 255, 0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(bx, by, 42, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
 
@@ -1481,6 +1652,16 @@ function drawFishSprite(ctx: CanvasRenderingContext2D, cx: number, cy: number, c
   ctx.lineTo(L * 0.2, -H2 * 0.95);
   ctx.closePath();
   ctx.fill();
+  // Rim highlight — bright arc across the top of the body, suggesting
+  // the surface light hitting the upper curve of the fish.
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(-L * 0.2, -H2 * 0.88);
+  ctx.bezierCurveTo(-L * 0.05, -H2 * 1.02, L * 0.25, -H2 * 1.02, L * 0.45, -H2 * 0.75);
+  ctx.stroke();
+  ctx.restore();
   const eyeX = L * 0.4, eyeY = -H2 * 0.3;
   ctx.fillStyle = "#fff";
   ctx.beginPath();
