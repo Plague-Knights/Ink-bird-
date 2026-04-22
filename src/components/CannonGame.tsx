@@ -1076,11 +1076,11 @@ function render(
   const stripW = STRIP_END - STRIP_START;
   const sandLevel = H2 - GROUND_H + 4;
 
-  // Multiplier zone bands on the sand — these visualize the payout
-  // curve (1×, 2×, 3×, 4×, 5×) so the player can see what each landing
-  // spot is worth. Colored stripes get hotter as multiplier rises.
-  // During flight we highlight the zone the squid is CURRENTLY over so
-  // you can feel the tension build as it drifts between bands.
+  // Multiplier milestone posts on the sand. One post per whole multi
+  // (1×, 2×, 3×, 4×, 5×), placed AT that meter mark so the post's
+  // label matches the actual multiplier you'd earn by landing there.
+  // The band leading up to each post is tinted so the current zone
+  // reads at a glance, and pulses while the squid is flying over it.
   const MULTI_ZONES = [
     { mult: 1, color: "#6b8aa8" },
     { mult: 2, color: "#7fe3ff" },
@@ -1091,35 +1091,37 @@ function render(
   for (let i = 0; i < MULTI_ZONES.length; i++) {
     const z = MULTI_ZONES[i]!;
     const prev = i === 0 ? 0 : MULTI_ZONES[i - 1]!.mult;
-    // Zone covers the strip between prev×100m and this×100m.
+    // Band covers the strip between prev×100m (exclusive) and this×100m.
     const fracFrom = fracFromMeters(prev * 100);
     const fracTo = fracFromMeters(z.mult * 100);
-    const zoneX = stripStart + stripW * fracFrom;
-    const zoneW = stripW * (fracTo - fracFrom);
+    const bandX = stripStart + stripW * fracFrom;
+    const bandW = stripW * (fracTo - fracFrom);
     const intensity = 0.15 + (i / MULTI_ZONES.length) * 0.25;
-    // Is the squid currently over this zone? If so, pulse the intensity.
-    const overZone = squidWorldX != null && squidWorldY != null
-      && squidWorldX >= zoneX && squidWorldX < zoneX + zoneW;
+    const overZone = squidWorldX != null
+      && squidWorldX >= bandX && squidWorldX < bandX + bandW;
     const pulse = overZone ? 0.4 + Math.sin(frame * 0.2) * 0.15 : 0;
-    // Colored horizontal stripe just below the sand line.
     ctx.fillStyle = `${z.color}${Math.round((intensity + pulse) * 255).toString(16).padStart(2, "0")}`;
-    ctx.fillRect(zoneX, sandLevel - 1, zoneW, 5);
-    // Marker post at the start of each zone (not the first).
-    if (i > 0) {
+    ctx.fillRect(bandX, sandLevel - 1, bandW, 5);
+
+    // Marker post at the END of each band — where you'd actually
+    // hit this multiplier. "1×" sits at the 100m mark, "2×" at 200m,
+    // etc. The post is skipped at 5× since that's the world edge.
+    if (z.mult < 5) {
+      const postX = stripStart + stripW * fracTo;
       ctx.fillStyle = "rgba(40,25,8,0.8)";
-      ctx.fillRect(zoneX - 2, sandLevel - 28, 4, 28);
+      ctx.fillRect(postX - 2, sandLevel - 28, 4, 28);
       ctx.fillStyle = z.color;
       ctx.beginPath();
-      ctx.moveTo(zoneX, sandLevel - 36);
-      ctx.lineTo(zoneX + 22, sandLevel - 32);
-      ctx.lineTo(zoneX + 22, sandLevel - 22);
-      ctx.lineTo(zoneX, sandLevel - 26);
+      ctx.moveTo(postX, sandLevel - 36);
+      ctx.lineTo(postX + 24, sandLevel - 32);
+      ctx.lineTo(postX + 24, sandLevel - 22);
+      ctx.lineTo(postX, sandLevel - 26);
       ctx.closePath();
       ctx.fill();
       ctx.fillStyle = "#06131e";
       ctx.font = 'bold 12px "Rubik", sans-serif';
       ctx.textAlign = "center";
-      ctx.fillText(`${z.mult}×`, zoneX + 11, sandLevel - 26);
+      ctx.fillText(`${z.mult}×`, postX + 12, sandLevel - 26);
       ctx.textAlign = "start";
     }
   }
@@ -1219,22 +1221,9 @@ function render(
     const apexLift = 160 + angleT * 660; // 160..820 px above lower endpoint
     const apex = Math.min(muzzleY, landY) - apexLift;
 
-    // Draw full dotted arc (faded) only while in flight — it's
-    // distracting once the squid has landed.
-    if (animProgress < 1) {
-      ctx.save();
-      ctx.setLineDash([4, 6]);
-      ctx.strokeStyle = "rgba(127,227,255,0.22)";
-      ctx.lineWidth = 1.4;
-      ctx.beginPath();
-      for (let t = 0; t <= 1; t += 0.02) {
-        const x = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
-        const y = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
-        if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
+    // No pre-drawn flight path — showing the full bezier in advance
+    // spoils the landing point and kills the tension. The motion trail
+    // below handles path visibility as the squid actually flies.
 
     const t = animProgress;
     const baseBx = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
@@ -1588,6 +1577,44 @@ function render(
         ctx.lineTo(xStart + len, yBase + len * 0.08);
         ctx.stroke();
       }
+      ctx.restore();
+    }
+  }
+
+  // Live distance counter — shown in screen space top-center while the
+  // squid is flying or landing. Converts the squid's current world x
+  // back into meters using the same frac↔m mapping.
+  if (round.status === "resolved" && resolvedAtFrame != null && squidWorldX != null) {
+    const sinceResolve = frame - resolvedAtFrame;
+    // Keep visible through tumble so the player can see the final
+    // distance line up with the multiplier chip.
+    const totalFlight = FLIGHT_FRAMES + TUMBLE_FRAMES;
+    if (sinceResolve < totalFlight + 50) {
+      const frac = (squidWorldX - STRIP_START) / (STRIP_END - STRIP_START);
+      // Invert fracFromMeters: frac = 0.05 + (m/500)*0.9  →  m = (frac-0.05)/0.9 * 500
+      const metersNow = Math.max(0, Math.round(((frac - 0.05) / 0.9) * 500));
+      const mult = metersNow / 100;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.save();
+      const cx = cw / 2;
+      const boxW = 200, boxH = 58;
+      const boxY = 14;
+      ctx.fillStyle = "rgba(2,24,48,0.78)";
+      roundRect(ctx, cx - boxW / 2, boxY, boxW, boxH, 10); ctx.fill();
+      ctx.strokeStyle = "rgba(127,227,255,0.45)";
+      ctx.lineWidth = 1.2;
+      roundRect(ctx, cx - boxW / 2, boxY, boxW, boxH, 10); ctx.stroke();
+      ctx.fillStyle = "#7b94b8";
+      ctx.font = 'bold 10px "Rubik", ui-monospace, monospace';
+      ctx.textAlign = "center";
+      ctx.fillText("DISTANCE", cx, boxY + 16);
+      ctx.fillStyle = "#7fe3ff";
+      ctx.font = 'bold 22px "Rubik", ui-monospace, monospace';
+      ctx.fillText(`${metersNow}m`, cx - 36, boxY + 42);
+      ctx.fillStyle = "#ffd76a";
+      ctx.font = 'bold 18px "Rubik", ui-monospace, monospace';
+      ctx.fillText(`${mult.toFixed(2)}×`, cx + 48, boxY + 42);
+      ctx.textAlign = "start";
       ctx.restore();
     }
   }
