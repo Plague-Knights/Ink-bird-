@@ -63,7 +63,7 @@ const DEFAULT_ANGLE = 45;
 // snappier squid launch after the on-chain roll lands.
 const FLIGHT_FRAMES = 70;
 
-type Bubble = { x: number; y: number; r: number; tw: number };
+type Bubble = { x: number; y: number; r: number; tw: number; vy: number; wiggle: number };
 type Weed = { x: number; w: number; h: number; layer: 0 | 1 };
 type Rock = { x: number; w: number; h: number };
 type ReefCoral = { x: number; h: number; color: string; sway: number };
@@ -422,13 +422,19 @@ function CannonCanvas({
     const ro = new ResizeObserver(resizeCanvas);
     ro.observe(c);
 
+    // Bubbles are scattered with a seeded PRNG so they look random (not
+    // on a visible diagonal lattice) and each carries its own rise speed
+    // + wiggle phase so they drift up convincingly.
+    const bubbleRand = mulberry32(layoutSeed ^ 0xB0BB1E);
     const bubbles: Bubble[] = [];
     for (let i = 0; i < 170; i++) {
       bubbles.push({
-        x: (i * 97) % WORLD_W,
-        y: 30 + ((i * 173) % (WORLD_H - GROUND_H - 60)),
-        r: 1.2 + ((i * 7) % 20) / 10,
-        tw: i,
+        x: bubbleRand() * WORLD_W,
+        y: 30 + bubbleRand() * (WORLD_H - GROUND_H - 60),
+        r: 1.2 + bubbleRand() * 2.2,
+        tw: bubbleRand() * Math.PI * 2,
+        vy: 0.25 + bubbleRand() * 0.6, // rise speed, world units per frame
+        wiggle: bubbleRand() * Math.PI * 2,
       });
     }
     const weeds: Weed[] = [];
@@ -656,13 +662,22 @@ function render(
   }
   ctx.restore();
 
+  // Advance + draw bubbles. They rise with a gentle sideways wobble
+  // and wrap back to the seabed when they pop out the top.
   for (const b of bubbles) {
+    b.y -= b.vy;
+    if (b.y < 20) {
+      b.y = H2 - GROUND_H - 10;
+      b.x = Math.random() * W2; // respawn across the world width
+    }
+    const wobble = Math.sin(b.wiggle + frame * 0.04) * 0.6;
+    const drawX = b.x + wobble;
     const a = 0.35 + Math.sin(b.tw + frame * 0.03) * 0.15;
     ctx.strokeStyle = `rgba(220,240,255,${a + 0.35})`;
     ctx.lineWidth = 1;
     ctx.fillStyle = `rgba(180,220,255,${a * 0.35})`;
     ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.arc(drawX, b.y, b.r, 0, Math.PI * 2);
     ctx.fill(); ctx.stroke();
   }
 
