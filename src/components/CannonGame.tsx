@@ -59,9 +59,13 @@ function fracFromMeters(m: number): number {
 const MIN_ANGLE = 20;
 const MAX_ANGLE = 75;
 const DEFAULT_ANGLE = 45;
-// Squid flight animation length, in rAF frames (~60fps). Long enough
-// that the arc has room to read; too short and the squid is a blur.
-const FLIGHT_FRAMES = 110;
+// Squid flight animation length, in rAF frames (~60fps). Long + slow so
+// the squid has time to bounce off stuff and every round feels like a
+// little journey rather than a snap-to-landing.
+const FLIGHT_FRAMES = 200;
+// After landing, the squid tumbles on the ground for these many frames
+// before coming to rest. Adds drama without changing the payout spot.
+const TUMBLE_FRAMES = 50;
 // Zoom: how many world units tall the canvas shows. Smaller = tighter
 // zoom. WORLD_H is 1200, so 850 gives roughly a 40% zoom-in over the
 // fit-everything view.
@@ -101,10 +105,10 @@ export function CannonGame() {
       setShowResult(false);
       return;
     }
-    // Show the toast just after the flight animation lands. FLIGHT_FRAMES
-    // is ~60fps rAF frames, so convert to ms with a small buffer so the
-    // landing glow/multi chip have read before the toast appears.
-    const ms = (FLIGHT_FRAMES * 1000) / 60 + 200;
+    // Show the toast just after the squid finishes tumbling. Convert
+    // rAF frames (~60fps) to ms and add a small read buffer so the
+    // canvas multi chip pops in first.
+    const ms = ((FLIGHT_FRAMES + TUMBLE_FRAMES) * 1000) / 60 + 250;
     const id = setTimeout(() => setShowResult(true), ms);
     return () => clearTimeout(id);
   }, [round.status, seedHash]);
@@ -477,6 +481,11 @@ function CannonCanvas({
     }>();
     // Smoothed camera — lerps toward a target each frame on both axes.
     const cameraRef = { x: 0, y: Math.max(0, WORLD_H - VISIBLE_WORLD_H) };
+    // Physics-based squid kickback. Each fish collision adds a velocity
+    // impulse; every frame the kick decays and its position offset is
+    // added to the squid's bezier coordinates so the flight visibly
+    // ricochets off the fish it clips.
+    const squidKick = { vx: 0, vy: 0, ox: 0, oy: 0 };
 
     resolvedAtFrameRef.current = null;
 
@@ -492,15 +501,17 @@ function CannonCanvas({
         resolvedAtFrameRef.current = frame;
         lockedAngleRef.current = angleRef.current;
         fishHits.clear();
+        squidKick.vx = 0; squidKick.vy = 0; squidKick.ox = 0; squidKick.oy = 0;
       } else if (r.status !== "resolved") {
         resolvedAtFrameRef.current = null;
         fishHits.clear();
+        squidKick.vx = 0; squidKick.vy = 0; squidKick.ox = 0; squidKick.oy = 0;
       }
       render(
         ctx, bubbles, weeds, rocks, reefs, creatures, midAirFish, fishHits,
         frame, r, resolvedAtFrameRef.current, betRef.current,
         r.status === "resolved" ? lockedAngleRef.current : angleRef.current,
-        cameraRef,
+        cameraRef, squidKick,
       );
       raf = requestAnimationFrame(tick);
     };
@@ -596,13 +607,14 @@ function generateCreatures(seed: number): Creature[] {
 function generateMidAirFish(seed: number): MidAirFish[] {
   const rand = mulberry32(seed);
   const fish: MidAirFish[] = [];
-  const count = 5 + Math.floor(rand() * 4);
+  // Dense enough that most arcs clip several fish on the way across.
+  const count = 14 + Math.floor(rand() * 7);
   for (let i = 0; i < count; i++) {
     fish.push({
-      x: 0.15 + rand() * 0.8,
-      y: 0.25 + rand() * 0.45,
-      color: rand() < 0.5 ? "#ff9b5a" : "#7fe3ff",
-      size: 0.7 + rand() * 0.4,
+      x: 0.12 + rand() * 0.84,
+      y: 0.2 + rand() * 0.55,
+      color: rand() < 0.33 ? "#ff9b5a" : rand() < 0.5 ? "#7fe3ff" : rand() < 0.5 ? "#ff7aa8" : "#ffd76a",
+      size: 0.7 + rand() * 0.5,
       phase: rand() * Math.PI * 2,
       flip: rand() < 0.5,
     });
@@ -636,6 +648,7 @@ function render(
   _bet: bigint | null,
   angleDeg: number,
   cameraRef: { x: number; y: number },
+  squidKick: { vx: number; vy: number; ox: number; oy: number },
 ) {
   const cw = ctx.canvas.width;
   const ch = ctx.canvas.height;
@@ -831,10 +844,11 @@ function render(
   const muzzleY = cannonBaseY - PIVOT_Y_OFFSET + Math.sin(barrelRad) * BARREL_LEN;
 
   if (round.status === "resolved" && resolvedAtFrame != null) {
-    // Animate flight over ~90 frames after resolution. Distance rolled
-    // by the contract drives the landing x; a subtle post-apex bounce
-    // plays for long-range rolls.
-    const animProgress = Math.min(1, (frame - resolvedAtFrame) / FLIGHT_FRAMES);
+    // Flight: the squid flies along a bezier over FLIGHT_FRAMES, then
+    // spends TUMBLE_FRAMES bouncing on the sand before coming to rest.
+    const sinceResolve = frame - resolvedAtFrame;
+    const animProgress = Math.min(1, sinceResolve / FLIGHT_FRAMES);
+    const tumbleT = Math.max(0, Math.min(1, (sinceResolve - FLIGHT_FRAMES) / TUMBLE_FRAMES));
     const distanceBp = round.distanceBp;
     const meters = distanceBpToMeters(distanceBp);
     const bust = distanceBp === 0;
@@ -844,82 +858,108 @@ function render(
     const landY = sandLevel - 4;
 
     const midX = (muzzleX + landX) / 2;
-    // Apex height scales with the chosen angle — 20° gives a shallow
-    // low trajectory (apex barely above the muzzle), 75° gives a high
-    // lob that can reach the upper mid-air fish. Range is tuned for the
-    // 1200px-tall canvas so max angle actually reaches the top band.
     const angleT = (angleDeg - MIN_ANGLE) / (MAX_ANGLE - MIN_ANGLE); // 0..1
     const apexLift = 160 + angleT * 660; // 160..820 px above lower endpoint
     const apex = Math.min(muzzleY, landY) - apexLift;
 
-    // Draw full dotted arc (faded)
-    ctx.save();
-    ctx.setLineDash([4, 6]);
-    ctx.strokeStyle = "rgba(127,227,255,0.25)";
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    for (let t = 0; t <= 1; t += 0.02) {
-      const x = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
-      const y = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
-      if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    // Draw full dotted arc (faded) only while in flight — it's
+    // distracting once the squid has landed.
+    if (animProgress < 1) {
+      ctx.save();
+      ctx.setLineDash([4, 6]);
+      ctx.strokeStyle = "rgba(127,227,255,0.22)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      for (let t = 0; t <= 1; t += 0.02) {
+        const x = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
+        const y = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
+        if (t === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
     }
-    ctx.stroke();
-    ctx.restore();
 
     const t = animProgress;
-    const bx = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
-    const by = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
+    const baseBx = (1 - t) * (1 - t) * muzzleX + 2 * (1 - t) * t * midX + t * t * landX;
+    const baseBy = (1 - t) * (1 - t) * muzzleY + 2 * (1 - t) * t * apex   + t * t * landY;
     const slope = Math.atan2(
       2 * (1 - t) * (apex - muzzleY) + 2 * t * (landY - apex),
       2 * (1 - t) * (midX - muzzleX) + 2 * t * (landX - midX),
     );
 
-    // Motion trail
-    for (let i = 1; i <= 6; i++) {
-      const tt = Math.max(0, t - i * 0.025);
-      const tx = (1 - tt) * (1 - tt) * muzzleX + 2 * (1 - tt) * tt * midX + tt * tt * landX;
-      const ty = (1 - tt) * (1 - tt) * muzzleY + 2 * (1 - tt) * tt * apex + tt * tt * landY;
-      ctx.fillStyle = `rgba(127, 227, 255, ${0.25 - i * 0.035})`;
-      ctx.beginPath();
-      ctx.arc(tx, ty, 6 - i * 0.6, 0, Math.PI * 2);
-      ctx.fill();
+    // Integrate kick each frame — decays under friction and gravity-ish
+    // pull. The accumulated offset shifts the squid off its bezier so
+    // fish bonks visibly deflect the flight.
+    squidKick.vy += 0.18;                // a nudge of gravity on the offset
+    squidKick.vx *= 0.92;
+    squidKick.vy *= 0.92;
+    squidKick.ox += squidKick.vx;
+    squidKick.oy += squidKick.vy;
+    // Pull the offset back toward zero so the squid still converges to
+    // the contract-determined landing point.
+    const convergence = 0.04 + animProgress * 0.1;
+    squidKick.ox *= 1 - convergence;
+    squidKick.oy *= 1 - convergence;
+
+    // Final squid position this frame — bezier + kick offset, plus a
+    // tumble bounce during the post-landing phase.
+    let bx = baseBx + squidKick.ox;
+    let by = baseBy + squidKick.oy;
+    let drawRot = slope * 1.5;
+    if (tumbleT > 0) {
+      // Dampened hop sequence along the ground with a little forward
+      // skid. Three bounces, each smaller than the last.
+      const hops = Math.abs(Math.sin(tumbleT * Math.PI * 3.2));
+      const decay = Math.pow(1 - tumbleT, 1.8);
+      const hopH = hops * decay * 68;
+      const skidX = (1 - decay) * 40;
+      bx = landX + skidX;
+      by = landY - hopH;
+      drawRot = tumbleT * Math.PI * 1.4; // squid tumbles as it rolls
+      squidKick.ox = squidKick.oy = 0;
+      squidKick.vx = squidKick.vy = 0;
     }
 
-    // Squid jolt — for ~12 frames after any hit the squid is visibly
-    // knocked around by the collision. Strongest right at impact,
-    // decaying quickly so the arc still reads clearly.
-    let joltX = 0, joltY = 0, joltRot = 0;
-    for (const [, hit] of fishHits) {
-      const age = frame - hit.hitFrame;
-      if (age < 0 || age > 12) continue;
-      const k = (12 - age) / 12;
-      joltX += (Math.sin(age * 2.1) * 8) * k;
-      joltY += (Math.cos(age * 1.7) * 6) * k;
-      joltRot += Math.sin(age * 2.4) * 0.25 * k;
+    // Motion trail — only during flight, not during tumble.
+    if (tumbleT === 0) {
+      for (let i = 1; i <= 6; i++) {
+        const tt = Math.max(0, t - i * 0.025);
+        const tx = (1 - tt) * (1 - tt) * muzzleX + 2 * (1 - tt) * tt * midX + tt * tt * landX;
+        const ty = (1 - tt) * (1 - tt) * muzzleY + 2 * (1 - tt) * tt * apex + tt * tt * landY;
+        ctx.fillStyle = `rgba(127, 227, 255, ${0.25 - i * 0.035})`;
+        ctx.beginPath();
+        ctx.arc(tx, ty, 6 - i * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
-    const bird: Bird = { x: bx + joltX, y: by + joltY, vy: 0, r: 18 };
-    drawBird(ctx, bird, slope * 1.5 + joltRot, frame * 0.6, frame);
+    const bird: Bird = { x: bx, y: by, vy: 0, r: 18 };
+    drawBird(ctx, bird, drawRot, frame * 0.6, frame);
 
-    // Mid-air fish hit detection — cosmetic only (payout is already
-    // fixed by the contract). On impact, we knock the fish away in the
-    // squid's direction of motion plus some spin, and draw a flash at
-    // the hit point so the collision reads as a real bonk.
-    if (animProgress > 0.04 && animProgress < 0.98) {
+    // Mid-air fish hit detection — we check against the actual drawn
+    // squid position (including kick offset) so collisions stay true
+    // to what the player sees. On impact, the fish gets flung and the
+    // squid receives a velocity kick up + slightly backward.
+    if (animProgress > 0.03 && animProgress < 0.97 && tumbleT === 0) {
       for (const fp of fishPositions) {
         if (fishHits.has(fp.idx)) continue;
         const fishR = 22 * fp.f.size;
         const dx = bx - fp.fx;
         const dy = by - fp.fy;
         if (dx * dx + dy * dy < (18 + fishR) * (18 + fishR)) {
-          const vx = Math.cos(slope) * 9 + (Math.random() - 0.5) * 3;
-          const vy = Math.sin(slope) * 9 - 2 + (Math.random() - 0.5) * 3;
+          // Fish is launched along squid's motion direction.
+          const fvx = Math.cos(slope) * 9 + (Math.random() - 0.5) * 3;
+          const fvy = Math.sin(slope) * 9 - 2 + (Math.random() - 0.5) * 3;
           fishHits.set(fp.idx, {
             hitFrame: frame,
             ox: 0, oy: 0,
-            vx, vy,
+            vx: fvx, vy: fvy,
             rot: 0, vrot: (Math.random() - 0.5) * 0.45,
           });
+          // Squid gets a bounce — mostly up with a small backward
+          // component, plus a random wobble so no two hits feel the same.
+          squidKick.vy -= 5 + Math.random() * 2;
+          squidKick.vx -= Math.cos(slope) * 2 + (Math.random() - 0.5) * 2;
         }
       }
     }
@@ -968,8 +1008,9 @@ function render(
       ctx.restore();
     }
 
-    // Landing effect after animation completes
-    if (animProgress >= 0.98) {
+    // Landing reveal — waits until after the squid has finished
+    // tumbling so the result doesn't pop in while it's still bouncing.
+    if (tumbleT >= 1) {
       if (bust) {
         // Red splat
         const splatR = 30 + Math.sin(frame * 0.3) * 3;
