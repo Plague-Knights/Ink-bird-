@@ -16,3 +16,6 @@ prisma/*.db-journal
 
 .DS_Store
 Thumbs.db
+
+# Claude Code local agent state — never commit
+.claude/

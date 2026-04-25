@@ -43,3 +43,17 @@ export const soneiumMinato = defineChain({
   },
   testnet: true,
 });
+
+// Soneium mainnet (chainId 1868) — mainnet target for the unified
+// InkSquidGame contract alongside Ink mainnet.
+export const soneium = defineChain({
+  id: 1868,
+  name: "Soneium",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.soneium.org"] },
+  },
+  blockExplorers: {
+    default: { name: "Soneium Blockscout", url: "https://soneium.blockscout.com" },
+  },
+});

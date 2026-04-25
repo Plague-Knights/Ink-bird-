@@ -49,7 +49,9 @@ function splitMultiplier(totalTh: number, count: number): number[] {
 }
 
 const STEP_MS = 520; // time between chest openings
-const FINAL_HOLD_MS = 900;
+// Hold the fully-revealed row before the summary card drops in, so the
+// player can read the distribution of multipliers they landed on.
+const FINAL_HOLD_MS = 1700;
 
 export function ChestReveal({
   multiplierThousandths,
@@ -98,9 +100,15 @@ export function ChestReveal({
     }}>
       <div style={{
         fontSize: 11, letterSpacing: "0.24em", color: "#7fe3ff",
-        textTransform: "uppercase", marginBottom: 8, fontFamily: 'system-ui, sans-serif',
+        textTransform: "uppercase", marginBottom: 4, fontFamily: 'system-ui, sans-serif',
       }}>
         your haul
+      </div>
+      <div style={{
+        fontSize: 11, color: "#7b94b8", marginBottom: 10,
+        fontFamily: 'system-ui, sans-serif', textAlign: "center", maxWidth: 420,
+      }}>
+        each chest reveals a slice of your roll — the sum is your payout
       </div>
 
       {/* Running payout ticker */}
@@ -131,10 +139,10 @@ export function ChestReveal({
             <div
               key={i}
               style={{
-                width: 72, height: 82,
+                width: 88, height: 96,
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                gap: 4,
-                borderRadius: 12,
+                gap: 2,
+                borderRadius: 14,
                 background: state === "open"
                   ? (piece === 0
                       ? "rgba(255, 116, 116, 0.14)"
@@ -158,24 +166,28 @@ export function ChestReveal({
             >
               {state === "closed" ? (
                 <>
-                  <svg width="26" height="20" viewBox="0 0 26 20" fill="none">
+                  <svg width="30" height="24" viewBox="0 0 26 20" fill="none">
                     <rect x="2" y="6" width="22" height="12" rx="2" fill="#8b5a2b" />
                     <rect x="2" y="6" width="22" height="3" rx="1.5" fill="#6a4220" />
                     <path d="M6 6 Q 13 -2 20 6" stroke="#5a3410" strokeWidth="2" fill="none" />
                     <rect x="11" y="9" width="4" height="5" rx="1" fill="#ffd76a" />
                   </svg>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>?</div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>?</div>
                 </>
               ) : piece === 0 ? (
                 <>
-                  <div style={{ fontSize: 20 }}>✖</div>
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em" }}>BUST</div>
+                  <div style={{ fontSize: 26, lineHeight: 1, fontWeight: 900 }}>0×</div>
+                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", marginTop: 4 }}>BUST</div>
                 </>
               ) : (
                 <>
-                  <div style={{ fontSize: 11, opacity: 0.85, fontWeight: 700 }}>+</div>
-                  <div style={{ fontSize: 16, fontWeight: 900 }}>{multi.toFixed(2)}×</div>
-                  <div style={{ fontSize: 9, opacity: 0.75 }}>
+                  <div style={{
+                    fontSize: 24, lineHeight: 1, fontWeight: 900,
+                    fontFamily: "ui-monospace, monospace",
+                  }}>
+                    {multi.toFixed(2)}×
+                  </div>
+                  <div style={{ fontSize: 9, opacity: 0.75, marginTop: 3 }}>
                     {(betEth * multi).toFixed(5)}
                   </div>
                 </>
