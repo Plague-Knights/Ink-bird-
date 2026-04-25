@@ -4,11 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useReadContract, useWaitForTransactionReceipt } from "wagmi";
 import { formatEther, parseEther, toHex } from "viem";
-import { GAME_ABI, gameAddressForChain, explorerForGameChain, allGameChains } from "@/lib/gameContract";
+import { GAME_ABI, gameAddressForChain, explorerForGameChain, supportedGameChains } from "@/lib/gameContract";
 import { AutoFlapper, type TurboLevel } from "@/components/AutoFlapper";
 import { ChestReveal } from "@/components/ChestReveal";
 
-const SUPPORTED_CHAINS = allGameChains();
+// Only list chains that actually have an InkSquidGame deployed (env
+// var set). A chain with no deploy stays hidden from the wallet
+// switcher so players don't pick it and land on "no contract" —
+// they just don't see it as an option.
+const SUPPORTED_CHAINS = supportedGameChains();
 
 type RoundStatus =
   | { status: "idle" }
