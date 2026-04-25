@@ -3,13 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useReadContract, useWaitForTransactionReceipt } from "wagmi";
-import { formatEther, parseEther } from "viem";
-import { CHESTS_ABI, chestsAddressForChain, explorerForChain } from "@/lib/chestsContract";
-import { inkSepolia, soneiumMinato } from "@/config/chains";
+import { formatEther, parseEther, toHex } from "viem";
+import { GAME_ABI, gameAddressForChain, explorerForGameChain, allGameChains } from "@/lib/gameContract";
 import { AutoFlapper, type TurboLevel } from "@/components/AutoFlapper";
 import { ChestReveal } from "@/components/ChestReveal";
 
-const SUPPORTED_CHAINS = [inkSepolia, soneiumMinato] as const;
+const SUPPORTED_CHAINS = allGameChains();
 
 type RoundStatus =
   | { status: "idle" }
@@ -23,16 +22,24 @@ type RoundStatus =
       multiplierThousandths: number;
       txReveal?: string;
     }
+  | {
+      // Round didn't resolve in the reveal window; player got their
+      // bet back 1× via the on-chain claimTimeout path.
+      status: "refunded";
+      betWei: string;
+      refundWei: string;
+      txRefund?: string;
+    }
   | { status: "error"; error: string };
 
 const POLL_MS = 2500;
 
 export function ChestsGame() {
-  const { address, isConnected } = useAccount();
+  const { isConnected } = useAccount();
   const chainId = useChainId();
   const { switchChain, isPending: switching } = useSwitchChain();
-  const CHESTS_ADDRESS = chestsAddressForChain(chainId);
-  const unsupportedChain = isConnected && !CHESTS_ADDRESS;
+  const GAME_ADDRESS = gameAddressForChain(chainId);
+  const unsupportedChain = isConnected && !GAME_ADDRESS;
 
   const [round, setRound] = useState<RoundStatus>({ status: "idle" });
   const [seedHash, setSeedHash] = useState<string | null>(null);
@@ -43,14 +50,14 @@ export function ChestsGame() {
   const [demoMode, setDemoMode] = useState(true);
   const [betInput, setBetInput] = useState<string>(""); // empty → defaults to max
 
-  const readAddress = CHESTS_ADDRESS ?? undefined;
+  const readAddress = GAME_ADDRESS ?? undefined;
   const enabledRead = !!readAddress;
   const { data: minBet } = useReadContract({
-    address: readAddress, abi: CHESTS_ABI, functionName: "minBet",
+    address: readAddress, abi: GAME_ABI, functionName: "minBet",
     query: { enabled: enabledRead },
   });
   const { data: maxBet } = useReadContract({
-    address: readAddress, abi: CHESTS_ABI, functionName: "maxBet",
+    address: readAddress, abi: GAME_ABI, functionName: "maxBet",
     query: { enabled: enabledRead },
   });
 
@@ -59,10 +66,11 @@ export function ChestsGame() {
 
   useEffect(() => {
     if (!seedHash) return;
-    if (round.status === "resolved" || round.status === "error" || round.status === "idle") return;
+    if (round.status === "resolved" || round.status === "refunded"
+        || round.status === "error" || round.status === "idle") return;
     const id = setInterval(async () => {
       try {
-        const res = await fetch(`/api/chest/round/${seedHash}?chain=${chainId}`);
+        const res = await fetch(`/api/game/round/${seedHash}?chain=${chainId}`);
         if (!res.ok) return;
         const body = await res.json();
         if (body.status === "resolved") {
@@ -72,6 +80,13 @@ export function ChestsGame() {
             payoutWei: body.payoutWei,
             multiplierThousandths: body.multiplierThousandths,
             txReveal: body.txReveal,
+          });
+        } else if (body.status === "refunded") {
+          setRound({
+            status: "refunded",
+            betWei: body.betWei,
+            refundWei: body.refundWei,
+            txRefund: body.txRefund,
           });
         } else if (body.status === "revealing") {
           setRound(prev => prev.status === "revealing" ? prev : { status: "revealing" });
@@ -134,21 +149,28 @@ export function ChestsGame() {
 
   async function play() {
     if (demoMode) { playDemo(); return; }
-    if (!isConnected || !CHESTS_ADDRESS || effectiveBetWei == null) return;
+    if (!isConnected || !GAME_ADDRESS || effectiveBetWei == null) return;
     setRound({ status: "opening" });
     try {
-      const res = await fetch(`/api/chest/open?chain=${chainId}`, { method: "POST" });
+      const res = await fetch(`/api/game/open?chain=${chainId}`, { method: "POST" });
       if (!res.ok) throw new Error(`open: ${res.status}`);
       const body = await res.json();
-      const hash = body.seedHash as `0x${string}`;
+      const hash = body.serverSeedHash as `0x${string}`;
+      // Generate playerSeed client-side — load-bearing for provably-fair.
+      // The server never sees it before the on-chain commit, so even a
+      // compromised server can't grind outcomes alongside a target
+      // address.
+      const buf = new Uint8Array(32);
+      crypto.getRandomValues(buf);
+      const playerSeed = toHex(buf);
       setSeedHash(hash);
       setVisualSeed(Math.floor(Math.random() * 0xffffffff));
       setRound({ status: "awaiting_play" });
       writeContract({
-        address: CHESTS_ADDRESS,
-        abi: CHESTS_ABI,
+        address: GAME_ADDRESS,
+        abi: GAME_ABI,
         functionName: "play",
-        args: [hash],
+        args: [hash, playerSeed],
         value: effectiveBetWei,
       });
     } catch (e) {
@@ -181,6 +203,7 @@ export function ChestsGame() {
       case "awaiting_play":return demoMode ? "Playing…" : "Awaiting play tx…";
       case "revealing":    return "Resolving on-chain…";
       case "resolved":     return demoMode ? "Play again (DEMO)" : "Play again";
+      case "refunded":     return "Play again";
       case "error":        return "Try again";
       default:             return demoMode
         ? "PLAY (DEMO)"
@@ -194,9 +217,10 @@ export function ChestsGame() {
       || round.status === "opening" || round.status === "awaiting_play" || round.status === "revealing"
       || effectiveBetWei == null);
 
-  const onButtonClick = round.status === "resolved" || round.status === "error"
-    ? resetForNextPlay
-    : play;
+  const onButtonClick =
+    round.status === "resolved" || round.status === "refunded" || round.status === "error"
+      ? resetForNextPlay
+      : play;
 
   // Hamburger-drawer state for the info panel.
   return <ChestsGameUI {...{
@@ -376,7 +400,7 @@ function ChestsGameUI(p: UIProps) {
             payoutWei={round.payoutWei}
             chestsCollected={runChests ?? 0}
             txReveal={round.txReveal}
-            explorerBase={explorerForChain(chainId)}
+            explorerBase={explorerForGameChain(chainId)}
             onContinue={() => {
               setRevealDismissed(true);
               resetForNextPlay();
@@ -416,10 +440,38 @@ function ChestsGameUI(p: UIProps) {
               {Number(formatEther(BigInt(round.payoutWei))).toFixed(6)} ETH
             </div>
             {round.txReveal && (
-              <a href={`${explorerForChain(chainId)}/tx/${round.txReveal}`}
+              <a href={`${explorerForGameChain(chainId)}/tx/${round.txReveal}`}
                  target="_blank" rel="noopener noreferrer"
                  style={{ fontSize: 10, opacity: 0.7, color: "#7fe3ff", display: "block", marginTop: 2, pointerEvents: "auto" }}>
                 reveal tx ↗
+              </a>
+            )}
+          </div>
+        )}
+        {/* Refunded — round didn't resolve in the reveal window. The
+            on-chain claimTimeout refunded 1× bet. Show a small banner so
+            the player understands what happened instead of hanging. */}
+        {round.status === "refunded" && (
+          <div style={{
+            position: "absolute", left: "50%", top: 12, transform: "translateX(-50%)",
+            padding: "10px 18px",
+            background: "rgba(48,32,2,0.88)",
+            border: "1px solid rgba(255,215,106,0.45)",
+            borderRadius: 12, color: "#ffd76a",
+            fontFamily: "ui-monospace, monospace", textAlign: "center", minWidth: 240,
+            backdropFilter: "blur(8px)",
+          }}>
+            <div style={{ fontSize: 11, opacity: 0.85, letterSpacing: "0.14em", textTransform: "uppercase" }}>
+              round timed out · refunded 1×
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 800, marginTop: 2 }}>
+              {Number(formatEther(BigInt(round.refundWei))).toFixed(6)} ETH
+            </div>
+            {round.txRefund && (
+              <a href={`${explorerForGameChain(chainId)}/tx/${round.txRefund}`}
+                 target="_blank" rel="noopener noreferrer"
+                 style={{ fontSize: 10, opacity: 0.8, color: "#ffd76a", display: "block", marginTop: 2 }}>
+                refund tx ↗
               </a>
             )}
           </div>
@@ -661,7 +713,7 @@ function ChestsGameUI(p: UIProps) {
                 )}
                 {unsupportedChain && (
                   <div style={{ fontSize: 12, color: "#ff9b5a", fontFamily: "ui-monospace, monospace" }}>
-                    switch to Ink Sepolia or Soneium Minato
+                    no game contract deployed on this chain yet — try another
                   </div>
                 )}
               </section>
